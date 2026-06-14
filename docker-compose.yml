@@ -1,8 +1,6 @@
 # Docker Compose — Chess AI Project
 # Chạy toàn bộ bằng 1 lệnh: docker-compose up --build
 
-version: "3.8"
-
 services:
   # ============================================
   # Backend — Python Flask (port 8080)
