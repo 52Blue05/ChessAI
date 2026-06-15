@@ -1,1 +1,0 @@
-timestamp,game_id,move_number,algorithm,depth,thinking_time_ms,nodes_evaluated,evaluation_score,move_uci,fen_before,fen_after,game_result
