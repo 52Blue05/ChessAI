@@ -8,8 +8,11 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # Copy source code
 COPY backend/ /app/backend/
-COPY ai-core/ /app/ai-core/
+COPY ai-core/ /app/ai_core/
+
+# Add /app to PYTHONPATH so "from backend.engine.*" and "from ai_core.*" imports work
+ENV PYTHONPATH=/app
 
 EXPOSE 8080
 
-CMD ["python", "backend/app.py"]
+CMD ["python", "-m", "backend.app"]

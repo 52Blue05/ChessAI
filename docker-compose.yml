@@ -13,12 +13,13 @@ services:
       - "8080:8080"
     volumes:
       - ./backend:/app/backend
-      - ./ai-core:/app/ai-core
+      - ./ai-core:/app/ai_core
       - ./benchmark_results.csv:/app/benchmark_results.csv
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
-    command: python backend/app.py
+      - PYTHONPATH=/app
+    command: python -m backend.app
 
   # ============================================
   # Frontend — React Vite (port 3000)

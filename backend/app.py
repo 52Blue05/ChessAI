@@ -8,7 +8,7 @@ Server: http://localhost:8080
 
 from flask import Flask
 from flask_cors import CORS
-from api.game_controller import game_bp
+from backend.api.game_controller import game_bp
 
 
 def create_app() -> Flask:
