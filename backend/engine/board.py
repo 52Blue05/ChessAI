@@ -20,6 +20,7 @@ FEN_PIECE_MAP = {
 }
 
 PIECE_TO_FEN = {v: k for k, v in FEN_PIECE_MAP.items()}
+PROMOTION_PIECES = {"queen", "rook", "bishop", "knight"}
 
 # FEN khởi đầu tiêu chuẩn
 STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -107,28 +108,77 @@ class Board:
 
     @staticmethod
     def from_fen(fen: str = STARTING_FEN) -> "Board":
-        """Tạo Board từ chuỗi FEN."""
+        """Tạo Board từ chuỗi FEN và từ chối dữ liệu không hợp lệ."""
+        if not isinstance(fen, str):
+            raise ValueError("FEN must be a string")
+
         parts = fen.split()
+        if len(parts) != 6:
+            raise ValueError("FEN must contain exactly 6 fields")
+
         board = Board()
 
         # 1. Piece placement
         rows = parts[0].split("/")
+        if len(rows) != 8:
+            raise ValueError("FEN board must contain exactly 8 ranks")
+
+        king_counts = {"white": 0, "black": 0}
         for r, row_str in enumerate(rows):
             col = 0
             for ch in row_str:
-                if ch.isdigit():
-                    col += int(ch)
-                else:
-                    piece_info = FEN_PIECE_MAP.get(ch)
-                    if piece_info:
-                        board.grid[r][col] = Piece(piece_info[0], piece_info[1])
-                    col += 1
+                if ch in "12345678":
+                    empty_count = int(ch)
+                    if not 1 <= empty_count <= 8:
+                        raise ValueError(
+                            f"Invalid empty-square count in FEN rank {8 - r}"
+                        )
+                    col += empty_count
+                    if col > 8:
+                        raise ValueError(
+                            f"FEN rank {8 - r} contains more than 8 squares"
+                        )
+                    continue
+
+                piece_info = FEN_PIECE_MAP.get(ch)
+                if piece_info is None:
+                    raise ValueError(f"Invalid FEN piece symbol: {ch}")
+                if col >= 8:
+                    raise ValueError(
+                        f"FEN rank {8 - r} contains more than 8 squares"
+                    )
+
+                piece = Piece(piece_info[0], piece_info[1])
+                board.grid[r][col] = piece
+                if piece.piece_type == "king":
+                    king_counts[piece.color] += 1
+                col += 1
+
+            if col != 8:
+                raise ValueError(
+                    f"FEN rank {8 - r} must contain exactly 8 squares"
+                )
+
+        if king_counts["white"] != 1 or king_counts["black"] != 1:
+            raise ValueError(
+                "FEN must contain exactly one white king and one black king"
+            )
 
         # 2. Active color
+        if parts[1] not in {"w", "b"}:
+            raise ValueError("FEN active color must be 'w' or 'b'")
         board.current_player = "white" if parts[1] == "w" else "black"
 
         # 3. Castling availability
         castling_str = parts[2]
+        if castling_str != "-":
+            if any(ch not in "KQkq" for ch in castling_str):
+                raise ValueError(
+                    "FEN castling field must be '-' or contain only KQkq"
+                )
+            if len(set(castling_str)) != len(castling_str):
+                raise ValueError("FEN castling field contains duplicates")
+
         board.castling = CastlingRights(
             white_king_side="K" in castling_str,
             white_queen_side="Q" in castling_str,
@@ -138,13 +188,29 @@ class Board:
 
         # 4. En passant target square
         if parts[3] != "-":
-            board.en_passant = Square.from_algebraic(parts[3])
+            en_passant = parts[3]
+            if (
+                len(en_passant) != 2
+                or en_passant[0] not in "abcdefgh"
+                or en_passant[1] not in "12345678"
+            ):
+                raise ValueError(
+                    "FEN en passant field must be '-' or a valid square"
+                )
+            board.en_passant = Square.from_algebraic(en_passant)
         else:
             board.en_passant = None
 
         # 5. Halfmove clock & fullmove number
+        if not parts[4].isascii() or not parts[4].isdecimal():
+            raise ValueError("FEN halfmove clock must be a non-negative integer")
+        if not parts[5].isascii() or not parts[5].isdecimal():
+            raise ValueError("FEN fullmove number must be a positive integer")
+
         board.half_move_clock = int(parts[4])
         board.full_move_number = int(parts[5])
+        if board.full_move_number < 1:
+            raise ValueError("FEN fullmove number must be a positive integer")
 
         return board
 
@@ -205,96 +271,68 @@ class Board:
         Thực hiện nước đi và trả về Board MỚI (immutable pattern).
         Board cũ không bị thay đổi.
 
-        Xử lý đầy đủ:
-        - Di chuyển quân
-        - Bắt quân
-        - Phong cấp
-        - Nhập thành
-        - Bắt tốt qua đường (en passant)
-        - Cập nhật castling rights
-        - Đổi lượt
+        Kiểm tra và thực hiện di chuyển cơ bản, bắt quân, phong cấp,
+        nhập thành và bắt tốt qua đường. Việc kiểm tra nước đi có để
+        vua bị chiếu hay không thuộc trách nhiệm của MoveGenerator.
         """
+        piece, captured = self._validate_move(move)
         new_board = deepcopy(self)
+        is_castling = (
+            piece.piece_type == "king"
+            and move.from_sq.row == move.to_sq.row
+            and abs(move.to_sq.col - move.from_sq.col) == 2
+        )
+        is_en_passant = (
+            piece.piece_type == "pawn"
+            and move.from_sq.col != move.to_sq.col
+            and self.get_piece(move.to_sq) is None
+            and self.en_passant == move.to_sq
+        )
 
-        piece = new_board.get_piece(move.from_sq)
-        captured = new_board.get_piece(move.to_sq)
         move.captured = captured
 
         # Di chuyển quân
-        new_board.set_piece(move.to_sq, piece)
+        new_board.set_piece(move.to_sq, deepcopy(piece))
         new_board.set_piece(move.from_sq, None)
 
+        # Bắt tốt qua đường: quân bị bắt nằm cạnh ô xuất phát.
+        if is_en_passant:
+            captured_sq = Square(move.from_sq.row, move.to_sq.col)
+            new_board.set_piece(captured_sq, None)
+
+        # Nhập thành: di chuyển xe sang phía bên kia của vua.
+        if is_castling:
+            rook_from_col = 7 if move.to_sq.col == 6 else 0
+            rook_to_col = 5 if move.to_sq.col == 6 else 3
+            rook_from = Square(move.from_sq.row, rook_from_col)
+            rook_to = Square(move.from_sq.row, rook_to_col)
+            rook = new_board.get_piece(rook_from)
+            new_board.set_piece(rook_to, rook)
+            new_board.set_piece(rook_from, None)
+
         # Phong cấp
-        if move.promotion and piece:
+        if move.promotion:
             new_board.set_piece(move.to_sq, Piece(move.promotion, piece.color))
 
-        # --- Nhập thành (Castling) ---
-        if piece and piece.piece_type == "king":
-            col_diff = move.to_sq.col - move.from_sq.col
-            if abs(col_diff) == 2:
-                row = move.from_sq.row
-                if col_diff > 0:
-                    # King-side: xe từ h (col 7) sang f (col 5)
-                    rook = new_board.get_piece(Square(row, 7))
-                    new_board.set_piece(Square(row, 5), rook)
-                    new_board.set_piece(Square(row, 7), None)
-                else:
-                    # Queen-side: xe từ a (col 0) sang d (col 3)
-                    rook = new_board.get_piece(Square(row, 0))
-                    new_board.set_piece(Square(row, 3), rook)
-                    new_board.set_piece(Square(row, 0), None)
+        new_board._update_castling_rights(piece, move, captured)
 
-        # --- Bắt tốt qua đường (En passant capture) ---
-        if (piece and piece.piece_type == "pawn" and
-            self.en_passant and
-            move.to_sq.row == self.en_passant.row and
-            move.to_sq.col == self.en_passant.col):
-            # Xóa quân tốt bị bắt (nằm cùng hàng với quân đi, cùng cột với ô en passant)
-            captured_pawn_row = move.from_sq.row
-            new_board.set_piece(Square(captured_pawn_row, move.to_sq.col), None)
-
-        # --- Cập nhật en passant square ---
+        # En passant chỉ có hiệu lực đúng một lượt.
         new_board.en_passant = None
-        if piece and piece.piece_type == "pawn":
-            row_diff = move.to_sq.row - move.from_sq.row
-            if abs(row_diff) == 2:
-                # Tốt đi 2 ô → set en passant square (ô giữa)
-                ep_row = move.from_sq.row + row_diff // 2
-                new_board.en_passant = Square(ep_row, move.from_sq.col)
-
-        # --- Cập nhật castling rights ---
-        # Vua di chuyển → mất quyền nhập thành cả 2 bên
-        if piece and piece.piece_type == "king":
-            if piece.color == "white":
-                new_board.castling.white_king_side = False
-                new_board.castling.white_queen_side = False
-            else:
-                new_board.castling.black_king_side = False
-                new_board.castling.black_queen_side = False
-
-        # Xe di chuyển hoặc bị bắt → mất quyền nhập thành tương ứng
-        # Xe trắng a1
-        if (move.from_sq.row == 7 and move.from_sq.col == 0) or \
-           (move.to_sq.row == 7 and move.to_sq.col == 0):
-            new_board.castling.white_queen_side = False
-        # Xe trắng h1
-        if (move.from_sq.row == 7 and move.from_sq.col == 7) or \
-           (move.to_sq.row == 7 and move.to_sq.col == 7):
-            new_board.castling.white_king_side = False
-        # Xe đen a8
-        if (move.from_sq.row == 0 and move.from_sq.col == 0) or \
-           (move.to_sq.row == 0 and move.to_sq.col == 0):
-            new_board.castling.black_queen_side = False
-        # Xe đen h8
-        if (move.from_sq.row == 0 and move.from_sq.col == 7) or \
-           (move.to_sq.row == 0 and move.to_sq.col == 7):
-            new_board.castling.black_king_side = False
+        if (
+            piece.piece_type == "pawn"
+            and move.from_sq.col == move.to_sq.col
+            and abs(move.to_sq.row - move.from_sq.row) == 2
+        ):
+            new_board.en_passant = Square(
+                (move.from_sq.row + move.to_sq.row) // 2,
+                move.from_sq.col,
+            )
 
         # Đổi lượt
         new_board.current_player = "black" if self.current_player == "white" else "white"
 
         # Cập nhật counters
-        if piece and piece.piece_type == "pawn" or captured:
+        if piece.piece_type == "pawn" or captured:
             new_board.half_move_clock = 0
         else:
             new_board.half_move_clock = self.half_move_clock + 1
@@ -303,6 +341,199 @@ class Board:
             new_board.full_move_number = self.full_move_number + 1
 
         return new_board
+
+    def _validate_move(self, move: Move) -> tuple[Piece, Optional[Piece]]:
+        """Kiểm tra một nước đi pseudo-legal trước khi cập nhật bàn cờ."""
+        if not move.from_sq.is_valid() or not move.to_sq.is_valid():
+            raise ValueError("Move squares must be on the board")
+        if move.from_sq == move.to_sq:
+            raise ValueError("Source and destination squares must differ")
+
+        piece = self.get_piece(move.from_sq)
+        if piece is None:
+            raise ValueError("Cannot move from an empty square")
+        if piece.color != self.current_player:
+            raise ValueError("Cannot move a piece of the wrong color")
+
+        captured = self.get_piece(move.to_sq)
+        if captured and captured.color == piece.color:
+            raise ValueError("Cannot capture a piece of the same color")
+        if captured and captured.piece_type == "king":
+            raise ValueError("Cannot capture the opponent king")
+
+        row_delta = move.to_sq.row - move.from_sq.row
+        col_delta = move.to_sq.col - move.from_sq.col
+        abs_row = abs(row_delta)
+        abs_col = abs(col_delta)
+
+        if piece.piece_type == "pawn":
+            captured = self._validate_pawn_move(move, piece, captured)
+        elif piece.piece_type == "knight":
+            if (abs_row, abs_col) not in {(1, 2), (2, 1)}:
+                raise ValueError("Invalid knight move")
+        elif piece.piece_type == "bishop":
+            if abs_row == 0 or abs_row != abs_col:
+                raise ValueError("Invalid bishop move")
+            self._validate_clear_path(move)
+        elif piece.piece_type == "rook":
+            if not ((row_delta == 0) ^ (col_delta == 0)):
+                raise ValueError("Invalid rook move")
+            self._validate_clear_path(move)
+        elif piece.piece_type == "queen":
+            is_straight = (row_delta == 0) ^ (col_delta == 0)
+            is_diagonal = abs_row > 0 and abs_row == abs_col
+            if not (is_straight or is_diagonal):
+                raise ValueError("Invalid queen move")
+            self._validate_clear_path(move)
+        elif piece.piece_type == "king":
+            if row_delta == 0 and abs_col == 2:
+                self._validate_castling_structure(move, piece)
+            elif max(abs_row, abs_col) != 1:
+                raise ValueError("Invalid king move")
+        else:
+            raise ValueError(f"Unknown piece type: {piece.piece_type}")
+
+        if piece.piece_type != "pawn" and move.promotion is not None:
+            raise ValueError("Only pawns can be promoted")
+
+        return piece, captured
+
+    def _validate_pawn_move(
+        self,
+        move: Move,
+        piece: Piece,
+        captured: Optional[Piece],
+    ) -> Optional[Piece]:
+        """Kiểm tra nước tiến, bắt chéo và phong cấp của tốt."""
+        direction = -1 if piece.color == "white" else 1
+        start_row = 6 if piece.color == "white" else 1
+        promotion_row = 0 if piece.color == "white" else 7
+        row_delta = move.to_sq.row - move.from_sq.row
+        col_delta = move.to_sq.col - move.from_sq.col
+
+        if col_delta == 0:
+            if captured is not None:
+                raise ValueError("Pawn cannot capture straight ahead")
+            if row_delta == direction:
+                pass
+            elif row_delta == 2 * direction and move.from_sq.row == start_row:
+                middle = Square(move.from_sq.row + direction, move.from_sq.col)
+                if self.get_piece(middle) is not None:
+                    raise ValueError("Pawn cannot jump over a piece")
+            else:
+                raise ValueError("Invalid pawn move")
+        elif abs(col_delta) == 1 and row_delta == direction:
+            if captured is None:
+                if self.en_passant != move.to_sq:
+                    raise ValueError("Pawn diagonal move requires a capture")
+                captured_sq = Square(move.from_sq.row, move.to_sq.col)
+                captured = self.get_piece(captured_sq)
+                if (
+                    captured is None
+                    or captured.piece_type != "pawn"
+                    or captured.color == piece.color
+                ):
+                    raise ValueError("Invalid en passant capture")
+        else:
+            raise ValueError("Invalid pawn move")
+
+        reaches_promotion = move.to_sq.row == promotion_row
+        if reaches_promotion:
+            if move.promotion not in PROMOTION_PIECES:
+                raise ValueError("Pawn reaching the last rank must promote")
+        elif move.promotion is not None:
+            raise ValueError("Pawn can only promote on the last rank")
+
+        return captured
+
+    def _validate_castling_structure(self, move: Move, king: Piece) -> None:
+        """Kiểm tra quyền, vị trí quân và khoảng trống khi nhập thành."""
+        home_row = 7 if king.color == "white" else 0
+        if move.from_sq != Square(home_row, 4):
+            raise ValueError("King is not on its castling square")
+
+        king_side = move.to_sq == Square(home_row, 6)
+        queen_side = move.to_sq == Square(home_row, 2)
+        if not (king_side or queen_side):
+            raise ValueError("Invalid castling destination")
+
+        if king.color == "white":
+            has_right = (
+                self.castling.white_king_side
+                if king_side
+                else self.castling.white_queen_side
+            )
+        else:
+            has_right = (
+                self.castling.black_king_side
+                if king_side
+                else self.castling.black_queen_side
+            )
+        if not has_right:
+            raise ValueError("Castling rights are not available")
+
+        rook_col = 7 if king_side else 0
+        rook = self.get_piece(Square(home_row, rook_col))
+        if rook != Piece("rook", king.color):
+            raise ValueError("Required rook is not on its castling square")
+
+        between_cols = (5, 6) if king_side else (1, 2, 3)
+        if any(
+            self.get_piece(Square(home_row, col)) is not None
+            for col in between_cols
+        ):
+            raise ValueError("Castling path is blocked")
+
+    def _validate_clear_path(self, move: Move) -> None:
+        """Từ chối nước đi của quân trượt nếu có quân cản đường."""
+        row_step = (move.to_sq.row > move.from_sq.row) - (
+            move.to_sq.row < move.from_sq.row
+        )
+        col_step = (move.to_sq.col > move.from_sq.col) - (
+            move.to_sq.col < move.from_sq.col
+        )
+
+        row = move.from_sq.row + row_step
+        col = move.from_sq.col + col_step
+        while (row, col) != (move.to_sq.row, move.to_sq.col):
+            if self.get_piece(Square(row, col)) is not None:
+                raise ValueError("Sliding piece path is blocked")
+            row += row_step
+            col += col_step
+
+    def _update_castling_rights(
+        self,
+        piece: Piece,
+        move: Move,
+        captured: Optional[Piece],
+    ) -> None:
+        """Cập nhật quyền nhập thành sau khi vua/xe đi hoặc xe bị bắt."""
+        if piece.piece_type == "king":
+            if piece.color == "white":
+                self.castling.white_king_side = False
+                self.castling.white_queen_side = False
+            else:
+                self.castling.black_king_side = False
+                self.castling.black_queen_side = False
+
+        if piece.piece_type == "rook":
+            self._disable_rook_castling_right(piece.color, move.from_sq)
+
+        if captured and captured.piece_type == "rook":
+            self._disable_rook_castling_right(captured.color, move.to_sq)
+
+    def _disable_rook_castling_right(self, color: str, square: Square) -> None:
+        """Tắt quyền nhập thành gắn với ô xuất phát của một xe."""
+        if color == "white":
+            if square == Square(7, 0):
+                self.castling.white_queen_side = False
+            elif square == Square(7, 7):
+                self.castling.white_king_side = False
+        else:
+            if square == Square(0, 0):
+                self.castling.black_queen_side = False
+            elif square == Square(0, 7):
+                self.castling.black_king_side = False
 
     def copy(self) -> "Board":
         """Tạo bản sao deep copy."""

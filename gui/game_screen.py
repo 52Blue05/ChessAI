@@ -15,6 +15,9 @@ from backend.engine.benchmark_logger import BenchmarkLogger
 from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
 
 
+ACTIVE_GAME_STATUSES = {"playing", "check"}
+
+
 class GameScreen:
     """
     Màn hình chơi cờ.
@@ -34,8 +37,8 @@ class GameScreen:
         # AI Agents
         self.agents = {
             "greedy": GreedyAgent(),
-            "minimax": MinimaxAgent(depth=3),
-            "mcts": MCTSAgent(simulations=500),
+            "minimax": MinimaxAgent(depth=2),
+            "mcts": MCTSAgent(simulations=100),
         }
 
         # Settings
@@ -119,7 +122,7 @@ class GameScreen:
         if self.btn_ai_move.handle_event(event):
             if (self.board.current_player == "black" and
                 not self.is_thinking and
-                self.game_status == "playing"):
+                self.game_status in ACTIVE_GAME_STATUSES):
                 self._request_ai_move(self.selected_algo)
             return
 
@@ -132,7 +135,7 @@ class GameScreen:
 
     def _handle_board_click(self, row, col):
         """Xử lý click vào bàn cờ."""
-        if self.game_status != "playing":
+        if self.game_status not in ACTIVE_GAME_STATUSES:
             return
 
         target_sq = Square(row, col)
@@ -160,7 +163,7 @@ class GameScreen:
                 # Auto trigger AI move after human move
                 if (self.mode == "human_vs_ai" and
                     self.board.current_player == "black" and
-                    self.game_status == "playing"):
+                    self.game_status in ACTIVE_GAME_STATUSES):
                     pygame.time.set_timer(pygame.USEREVENT + 1, 500, loops=1)
                 return
             else:
@@ -256,7 +259,7 @@ class GameScreen:
     def update(self):
         """Update logic — dùng cho AI vs AI auto-play."""
         if self.mode == "ai_vs_ai" and not self.is_thinking:
-            if self.game_status == "playing":
+            if self.game_status in ACTIVE_GAME_STATUSES:
                 now = time.time()
                 if now - self._last_ai_time > self.ai_delay:
                     algo = self.white_algo if self.board.current_player == "white" else self.black_algo
@@ -268,7 +271,7 @@ class GameScreen:
             if (self.mode == "human_vs_ai" and
                 self.board.current_player == "black" and
                 not self.is_thinking and
-                self.game_status == "playing"):
+                self.game_status in ACTIVE_GAME_STATUSES):
                 self._request_ai_move(self.selected_algo)
 
     def draw(self, surface):
@@ -302,7 +305,7 @@ class GameScreen:
             self.btn_ai_move.enabled = (
                 self.board.current_player == "black" and
                 not self.is_thinking and
-                self.game_status == "playing"
+                self.game_status in ACTIVE_GAME_STATUSES
             )
             self.btn_ai_move.draw(surface)
         else:

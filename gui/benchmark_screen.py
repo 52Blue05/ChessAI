@@ -106,8 +106,8 @@ class BenchmarkScreen:
         """Chạy Round Robin benchmark."""
         agents = {
             "greedy": GreedyAgent(),
-            "minimax": MinimaxAgent(depth=3),
-            "mcts": MCTSAgent(simulations=500),
+            "minimax": MinimaxAgent(depth=2),
+            "mcts": MCTSAgent(simulations=100),
         }
 
         pairs = [

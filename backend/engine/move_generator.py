@@ -38,6 +38,7 @@ class MoveGenerator:
         (0, -1),           (0, 1),
         (1, -1),  (1, 0),  (1, 1),
     ]
+    PROMOTION_PIECES = ("queen", "rook", "bishop", "knight")
 
     def generate_legal_moves(self, board: Board, square: Optional[Square] = None) -> List[Move]:
         """
@@ -50,12 +51,9 @@ class MoveGenerator:
         Returns:
             Danh sách các nước đi hợp lệ.
 
-        TODO: Implement đầy đủ
-        - Sinh pseudo-legal moves cho từng loại quân
-        - Lọc bỏ nước đi khiến vua bị chiếu
-        - Xử lý nhập thành
-        - Xử lý bắt tốt qua đường (en passant)
-        - Xử lý phong cấp
+        Nước đi pseudo-legal được áp dụng lên một Board mới rồi lọc bỏ nếu
+        vua của bên đang đi vẫn bị chiếu. Cách lọc này xử lý cả quân bị ghim
+        và en passant làm lộ đường tấn công vào vua.
         """
         pseudo_moves = []
         color = board.current_player
@@ -105,57 +103,87 @@ class MoveGenerator:
     def _gen_pawn_moves(self, board: Board, sq: Square, color: str) -> List[Move]:
         """
         Sinh nước đi cho quân tốt.
+        Đã hỗ trợ:
         - Đi thẳng 1 ô
         - Đi thẳng 2 ô (từ vị trí ban đầu)
         - Bắt chéo
-        - Bắt tốt qua đường (en passant)
         - Phong cấp
+        - Bắt tốt qua đường (en passant)
         """
         moves = []
         direction = -1 if color == "white" else 1
         start_row = 6 if color == "white" else 1
         promo_row = 0 if color == "white" else 7
-        promotion_pieces = ["queen", "rook", "bishop", "knight"]
 
-        # --- Đi thẳng 1 ô ---
-        one_ahead = Square(sq.row + direction, sq.col)
-        if one_ahead.is_valid() and board.get_piece(one_ahead) is None:
-            if one_ahead.row == promo_row:
-                # Phong cấp
-                for promo in promotion_pieces:
-                    moves.append(Move(sq, one_ahead, promotion=promo))
-            else:
-                moves.append(Move(sq, one_ahead))
+        one_step = Square(sq.row + direction, sq.col)
+        if one_step.is_valid() and board.get_piece(one_step) is None:
+            self._append_pawn_moves(moves, sq, one_step, promo_row)
 
-            # --- Đi thẳng 2 ô (từ vị trí ban đầu) ---
-            if sq.row == start_row:
-                two_ahead = Square(sq.row + 2 * direction, sq.col)
-                if two_ahead.is_valid() and board.get_piece(two_ahead) is None:
-                    moves.append(Move(sq, two_ahead))
+            two_step = Square(sq.row + 2 * direction, sq.col)
+            if (
+                sq.row == start_row
+                and two_step.is_valid()
+                and board.get_piece(two_step) is None
+            ):
+                moves.append(Move(sq, two_step))
 
-        # --- Bắt chéo ---
-        for dc in [-1, 1]:
-            capture_sq = Square(sq.row + direction, sq.col + dc)
-            if not capture_sq.is_valid():
+        for col_offset in (-1, 1):
+            target = Square(sq.row + direction, sq.col + col_offset)
+            if not target.is_valid():
                 continue
 
-            target = board.get_piece(capture_sq)
-            if target and target.color != color:
-                if capture_sq.row == promo_row:
-                    for promo in promotion_pieces:
-                        moves.append(Move(sq, capture_sq, promotion=promo, captured=target))
-                else:
-                    moves.append(Move(sq, capture_sq, captured=target))
+            target_piece = board.get_piece(target)
+            if (
+                target_piece is not None
+                and target_piece.color != color
+                and target_piece.piece_type != "king"
+            ):
+                self._append_pawn_moves(
+                    moves,
+                    sq,
+                    target,
+                    promo_row,
+                    captured=target_piece,
+                )
 
-            # --- Bắt tốt qua đường (en passant) ---
-            if (board.en_passant and
-                capture_sq.row == board.en_passant.row and
-                capture_sq.col == board.en_passant.col):
-                # Quân tốt bị bắt nằm cạnh (cùng hàng với quân đang đi)
-                captured_pawn = board.get_piece(Square(sq.row, sq.col + dc))
-                moves.append(Move(sq, capture_sq, captured=captured_pawn))
+        if board.en_passant is not None:
+            target = board.en_passant
+            if (
+                target.row == sq.row + direction
+                and abs(target.col - sq.col) == 1
+                and board.get_piece(target) is None
+            ):
+                captured = board.get_piece(Square(sq.row, target.col))
+                if (
+                    captured is not None
+                    and captured.piece_type == "pawn"
+                    and captured.color != color
+                ):
+                    moves.append(Move(sq, target, captured=captured))
 
         return moves
+
+    def _append_pawn_moves(
+        self,
+        moves: List[Move],
+        from_sq: Square,
+        to_sq: Square,
+        promotion_row: int,
+        captured: Optional[Piece] = None,
+    ) -> None:
+        """Thêm một nước tốt thường hoặc bốn lựa chọn phong cấp."""
+        if to_sq.row == promotion_row:
+            for promotion in self.PROMOTION_PIECES:
+                moves.append(
+                    Move(
+                        from_sq,
+                        to_sq,
+                        promotion=promotion,
+                        captured=captured,
+                    )
+                )
+        else:
+            moves.append(Move(from_sq, to_sq, captured=captured))
 
     def _gen_knight_moves(self, board: Board, sq: Square, color: str) -> List[Move]:
         """Sinh nước đi cho quân mã."""
@@ -164,7 +192,12 @@ class MoveGenerator:
             target = Square(sq.row + dr, sq.col + dc)
             if target.is_valid():
                 target_piece = board.get_piece(target)
-                if target_piece is None or target_piece.color != color:
+                if target_piece is None:
+                    moves.append(Move(sq, target))
+                elif (
+                    target_piece.color != color
+                    and target_piece.piece_type != "king"
+                ):
                     moves.append(Move(sq, target, captured=target_piece))
         return moves
 
@@ -180,7 +213,8 @@ class MoveGenerator:
                 if target_piece is None:
                     moves.append(Move(sq, target))
                 elif target_piece.color != color:
-                    moves.append(Move(sq, target, captured=target_piece))
+                    if target_piece.piece_type != "king":
+                        moves.append(Move(sq, target, captured=target_piece))
                     break
                 else:
                     break
@@ -198,115 +232,190 @@ class MoveGenerator:
         return self._gen_sliding_moves(board, sq, color, self.QUEEN_DIRS)
 
     def _gen_king_moves(self, board: Board, sq: Square, color: str) -> List[Move]:
-        """
-        Sinh nước đi cho quân vua, bao gồm nhập thành (castling).
-        """
+        """Sinh nước đi thường và nhập thành cho quân vua."""
         moves = []
         for dr, dc in self.KING_OFFSETS:
             target = Square(sq.row + dr, sq.col + dc)
             if target.is_valid():
                 target_piece = board.get_piece(target)
-                if target_piece is None or target_piece.color != color:
+                if target_piece is None:
+                    moves.append(Move(sq, target))
+                elif (
+                    target_piece.color != color
+                    and target_piece.piece_type != "king"
+                ):
                     moves.append(Move(sq, target, captured=target_piece))
+        moves.extend(self._gen_castling_moves(board, sq, color))
+        return moves
 
-        # --- Nhập thành (Castling) ---
-        # Chỉ khi vua chưa bị chiếu
-        if not self.is_in_check(board, color):
-            back_row = 7 if color == "white" else 0
-            if sq.row == back_row and sq.col == 4:
-                # King-side castling (O-O)
-                can_ks = (board.castling.white_king_side if color == "white"
-                          else board.castling.black_king_side)
-                if can_ks:
-                    # Ô f và g phải trống
-                    if (board.get_piece(Square(back_row, 5)) is None and
-                        board.get_piece(Square(back_row, 6)) is None):
-                        # Vua không đi qua ô bị tấn công
-                        temp1 = board.make_move(Move(sq, Square(back_row, 5)))
-                        if not self.is_in_check(temp1, color):
-                            moves.append(Move(sq, Square(back_row, 6)))
+    def _gen_castling_moves(
+        self,
+        board: Board,
+        king_sq: Square,
+        color: str,
+    ) -> List[Move]:
+        """Sinh nhập thành khi quyền, quân, khoảng trống và attack map hợp lệ."""
+        home_row = 7 if color == "white" else 0
+        if king_sq != Square(home_row, 4):
+            return []
 
-                # Queen-side castling (O-O-O)
-                can_qs = (board.castling.white_queen_side if color == "white"
-                          else board.castling.black_queen_side)
-                if can_qs:
-                    # Ô b, c, d phải trống
-                    if (board.get_piece(Square(back_row, 1)) is None and
-                        board.get_piece(Square(back_row, 2)) is None and
-                        board.get_piece(Square(back_row, 3)) is None):
-                        # Vua không đi qua ô bị tấn công
-                        temp1 = board.make_move(Move(sq, Square(back_row, 3)))
-                        if not self.is_in_check(temp1, color):
-                            moves.append(Move(sq, Square(back_row, 2)))
+        opponent = self._opponent(color)
+        if self.is_square_attacked(board, king_sq, opponent):
+            return []
+
+        if color == "white":
+            rights = (
+                board.castling.white_king_side,
+                board.castling.white_queen_side,
+            )
+        else:
+            rights = (
+                board.castling.black_king_side,
+                board.castling.black_queen_side,
+            )
+
+        moves = []
+        candidates = (
+            (
+                rights[0],
+                7,
+                (5, 6),
+                (5, 6),
+                6,
+            ),
+            (
+                rights[1],
+                0,
+                (1, 2, 3),
+                (3, 2),
+                2,
+            ),
+        )
+        for has_right, rook_col, empty_cols, king_path, destination_col in candidates:
+            if not has_right:
+                continue
+            if board.get_piece(Square(home_row, rook_col)) != Piece("rook", color):
+                continue
+            if any(
+                board.get_piece(Square(home_row, col)) is not None
+                for col in empty_cols
+            ):
+                continue
+            if any(
+                self._king_transit_square_is_attacked(
+                    board,
+                    king_sq,
+                    Square(home_row, col),
+                    color,
+                    opponent,
+                )
+                for col in king_path
+            ):
+                continue
+            moves.append(Move(king_sq, Square(home_row, destination_col)))
 
         return moves
+
+    def _king_transit_square_is_attacked(
+        self,
+        board: Board,
+        from_sq: Square,
+        transit_sq: Square,
+        color: str,
+        opponent: str,
+    ) -> bool:
+        """Kiểm tra ô nhập thành sau khi tạm dời vua khỏi ô xuất phát."""
+        transit_board = board.copy()
+        transit_board.set_piece(from_sq, None)
+        transit_board.set_piece(transit_sq, Piece("king", color))
+        return self.is_square_attacked(transit_board, transit_sq, opponent)
 
     # ------------------------------------------------------------------
     # Kiểm tra trạng thái
     # ------------------------------------------------------------------
 
+    def is_square_attacked(
+        self,
+        board: Board,
+        square: Square,
+        by_color: str,
+    ) -> bool:
+        """Kiểm tra attack map mà không sinh legal moves hoặc gọi đệ quy."""
+        pawn_direction = -1 if by_color == "white" else 1
+        pawn_row = square.row - pawn_direction
+        for pawn_col in (square.col - 1, square.col + 1):
+            attacker = Square(pawn_row, pawn_col)
+            if (
+                attacker.is_valid()
+                and board.get_piece(attacker) == Piece("pawn", by_color)
+            ):
+                return True
+
+        for dr, dc in self.KNIGHT_OFFSETS:
+            attacker = Square(square.row + dr, square.col + dc)
+            if (
+                attacker.is_valid()
+                and board.get_piece(attacker) == Piece("knight", by_color)
+            ):
+                return True
+
+        for dr, dc in self.KING_OFFSETS:
+            attacker = Square(square.row + dr, square.col + dc)
+            if (
+                attacker.is_valid()
+                and board.get_piece(attacker) == Piece("king", by_color)
+            ):
+                return True
+
+        if self._is_attacked_by_slider(
+            board,
+            square,
+            by_color,
+            self.ROOK_DIRS,
+            {"rook", "queen"},
+        ):
+            return True
+
+        return self._is_attacked_by_slider(
+            board,
+            square,
+            by_color,
+            self.BISHOP_DIRS,
+            {"bishop", "queen"},
+        )
+
+    def _is_attacked_by_slider(
+        self,
+        board: Board,
+        square: Square,
+        by_color: str,
+        directions: list,
+        piece_types: set,
+    ) -> bool:
+        """Tìm xe/tượng/hậu đầu tiên nhìn thấy từ một ô theo các tia."""
+        for dr, dc in directions:
+            row, col = square.row + dr, square.col + dc
+            while 0 <= row <= 7 and 0 <= col <= 7:
+                piece = board.get_piece(Square(row, col))
+                if piece is not None:
+                    if piece.color == by_color and piece.piece_type in piece_types:
+                        return True
+                    break
+                row += dr
+                col += dc
+        return False
+
     def is_in_check(self, board: Board, color: str) -> bool:
-        """
-        Kiểm tra xem vua của bên `color` có đang bị chiếu không.
-        Kiểm tra tấn công từ tất cả loại quân đối phương.
-        """
+        """Trả về True nếu vua của `color` đang bị đối phương tấn công."""
         king_sq = board.find_king(color)
         if king_sq is None:
             return False
 
-        opponent = "black" if color == "white" else "white"
-        kr, kc = king_sq.row, king_sq.col
+        return self.is_square_attacked(board, king_sq, self._opponent(color))
 
-        # --- Kiểm tra tấn công từ Mã (Knight) ---
-        for dr, dc in self.KNIGHT_OFFSETS:
-            sq = Square(kr + dr, kc + dc)
-            if sq.is_valid():
-                p = board.get_piece(sq)
-                if p and p.color == opponent and p.piece_type == "knight":
-                    return True
-
-        # --- Kiểm tra tấn công từ quân trượt thẳng: Xe, Hậu (Rook, Queen) ---
-        for dr, dc in self.ROOK_DIRS:
-            r, c = kr + dr, kc + dc
-            while 0 <= r <= 7 and 0 <= c <= 7:
-                p = board.get_piece(Square(r, c))
-                if p:
-                    if p.color == opponent and p.piece_type in ("rook", "queen"):
-                        return True
-                    break  # Bị chặn bởi quân khác
-                r += dr
-                c += dc
-
-        # --- Kiểm tra tấn công từ quân trượt chéo: Tượng, Hậu (Bishop, Queen) ---
-        for dr, dc in self.BISHOP_DIRS:
-            r, c = kr + dr, kc + dc
-            while 0 <= r <= 7 and 0 <= c <= 7:
-                p = board.get_piece(Square(r, c))
-                if p:
-                    if p.color == opponent and p.piece_type in ("bishop", "queen"):
-                        return True
-                    break
-                r += dr
-                c += dc
-
-        # --- Kiểm tra tấn công từ Tốt (Pawn) ---
-        pawn_dir = 1 if color == "white" else -1  # Tốt đối phương tấn công từ hướng nào
-        for dc in [-1, 1]:
-            sq = Square(kr + pawn_dir, kc + dc)
-            if sq.is_valid():
-                p = board.get_piece(sq)
-                if p and p.color == opponent and p.piece_type == "pawn":
-                    return True
-
-        # --- Kiểm tra tấn công từ Vua đối phương ---
-        for dr, dc in self.KING_OFFSETS:
-            sq = Square(kr + dr, kc + dc)
-            if sq.is_valid():
-                p = board.get_piece(sq)
-                if p and p.color == opponent and p.piece_type == "king":
-                    return True
-
-        return False
+    @staticmethod
+    def _opponent(color: str) -> str:
+        return "black" if color == "white" else "white"
 
     def is_checkmate(self, board: Board) -> bool:
         """Kiểm tra chiếu hết."""
@@ -322,6 +431,41 @@ class MoveGenerator:
             return False
         return len(self.generate_legal_moves(board)) == 0
 
+    def is_insufficient_material(self, board: Board) -> bool:
+        """
+        Kiểm tra các trạng thái không thể chiếu hết bằng vật chất còn lại.
+
+        Hỗ trợ K vs K, K+B vs K, K+N vs K và K+B vs K+B khi hai
+        tượng nằm trên các ô cùng màu.
+        """
+        non_king_pieces = []
+        for row in range(8):
+            for col in range(8):
+                piece = board.grid[row][col]
+                if piece is not None and piece.piece_type != "king":
+                    non_king_pieces.append((piece, Square(row, col)))
+
+        if not non_king_pieces:
+            return True
+
+        if len(non_king_pieces) == 1:
+            piece, _ = non_king_pieces[0]
+            return piece.piece_type in {"bishop", "knight"}
+
+        if len(non_king_pieces) == 2:
+            (first_piece, first_square), (second_piece, second_square) = (
+                non_king_pieces
+            )
+            return (
+                first_piece.piece_type == "bishop"
+                and second_piece.piece_type == "bishop"
+                and first_piece.color != second_piece.color
+                and (first_square.row + first_square.col) % 2
+                == (second_square.row + second_square.col) % 2
+            )
+
+        return False
+
     def get_game_status(self, board: Board) -> str:
         """
         Xác định trạng thái ván đấu.
@@ -334,6 +478,8 @@ class MoveGenerator:
         if self.is_stalemate(board):
             return "stalemate"
         if board.half_move_clock >= 100:
+            return "draw"
+        if self.is_insufficient_material(board):
             return "draw"
         if self.is_in_check(board, board.current_player):
             return "check"

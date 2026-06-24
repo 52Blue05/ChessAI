@@ -112,8 +112,8 @@ def run_round_robin(games_per_pair: int = 10, max_moves: int = 150):
     # Khởi tạo agents
     agents = {
         "greedy": GreedyAgent(),
-        "minimax": MinimaxAgent(depth=3),
-        "mcts": MCTSAgent(simulations=500),
+        "minimax": MinimaxAgent(depth=2),
+        "mcts": MCTSAgent(simulations=100),
     }
 
     move_generator = MoveGenerator()

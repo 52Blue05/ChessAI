@@ -12,7 +12,21 @@ Phiên bản mới nhất đã được chuyển đổi từ Web (React/Flask) s
 ## Thuật toán AI
 1. **Greedy**: Lựa chọn nước đi tốt nhất ngay lập tức (tham lam) dựa trên đánh giá hiện tại, không nhìn xa.
 2. **Minimax + Alpha-Beta Pruning**: Duyệt cây trò chơi với độ sâu xác định, tìm kiếm nước đi tối ưu và cắt tỉa (pruning) các nhánh không cần thiết để tăng tốc độ.
-3. **MCTS (Monte Carlo Tree Search)**: Dùng mô phỏng ngẫu nhiên (random rollouts) để đánh giá các nước đi, cực kỳ hiệu quả khi cây trò chơi quá lớn.
+3. **MCTS (Monte Carlo Tree Search)**: Dùng cây Monte Carlo với rollout có định hướng, ưu tiên chiếu hết, phong cấp, bắt quân và chiếu trước khi chọn nước ngẫu nhiên.
+
+## Trạng thái engine và AI
+
+- Luật cờ: nước hợp lệ, chiếu/chiếu hết, stalemate, nhập thành, en passant, phong cấp, luật 50 nước và hòa do thiếu vật chất.
+- Greedy dùng hàm lượng giá chung gồm vật chất, vị trí quân, mobility, trung tâm và an toàn vua.
+- Minimax dùng Alpha-Beta, move ordering chiến thuật và điểm terminal hữu hạn.
+- MCTS mặc định 100 simulations, rollout được giới hạn để phù hợp demo desktop.
+- Cấu hình desktop mặc định: Minimax depth 2 và MCTS 100 simulations.
+
+Chạy kiểm thử:
+
+```bash
+python -m pytest -q
+```
 
 ## Cài đặt và Chạy
 
