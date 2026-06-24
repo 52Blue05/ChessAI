@@ -258,6 +258,302 @@ class TestMoveGenerator:
 
 
 # ==============================================================
+# Test Chess Legality
+# ==============================================================
+
+class TestChessLegality:
+    """Kiểm tra attack map, self-check, checkmate và stalemate."""
+
+    def setup_method(self):
+        self.gen = MoveGenerator()
+
+    @pytest.mark.parametrize(
+        "fen",
+        [
+            "4r2k/8/8/8/8/8/8/4K3 w - - 0 1",  # rook
+            "7k/8/8/8/1b6/8/8/4K3 w - - 0 1",  # bishop
+            "4q2k/8/8/8/8/8/8/4K3 w - - 0 1",  # queen
+            "7k/8/8/8/8/5n2/8/4K3 w - - 0 1",  # knight
+            "7k/8/8/8/8/8/3p4/4K3 w - - 0 1",  # pawn
+            "8/8/8/8/8/8/4k3/4K3 w - - 0 1",   # adjacent king
+        ],
+    )
+    def test_white_king_is_in_check_by_each_piece_type(self, fen):
+        board = Board.from_fen(fen)
+
+        assert self.gen.is_in_check(board, "white")
+        assert self.gen.is_square_attacked(
+            board,
+            board.find_king("white"),
+            "black",
+        )
+
+    def test_legal_moves_never_capture_opponent_king(self):
+        board = Board.from_fen("4k3/8/8/8/8/8/4R3/K7 w - - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(6, 4))
+
+        assert Square(0, 4) not in [move.to_sq for move in moves]
+        assert all(
+            move.captured is None or move.captured.piece_type != "king"
+            for move in moves
+        )
+
+    def test_pinned_piece_cannot_expose_king(self):
+        board = Board.from_fen("k3r3/8/8/8/8/8/4R3/4K3 w - - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(6, 4))
+
+        assert moves
+        assert all(move.to_sq.col == 4 for move in moves)
+        assert Square(6, 3) not in [move.to_sq for move in moves]
+
+    def test_king_cannot_move_into_check(self):
+        board = Board.from_fen("4r2k/8/8/8/8/8/8/4K3 w - - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(7, 4))
+
+        assert Square(6, 4) not in [move.to_sq for move in moves]
+
+    def test_side_in_check_only_has_moves_that_resolve_check(self):
+        board = Board.from_fen("4r2k/8/8/8/8/8/R7/4K3 w - - 0 1")
+        moves = self.gen.generate_legal_moves(board)
+
+        assert moves
+        assert all(
+            not self.gen.is_in_check(board.make_move(move), "white")
+            for move in moves
+        )
+        assert any(
+            move.from_sq == Square.from_algebraic("a2")
+            and move.to_sq == Square.from_algebraic("e2")
+            for move in moves
+        )
+        assert not any(
+            move.from_sq == Square.from_algebraic("a2")
+            and move.to_sq == Square.from_algebraic("a3")
+            for move in moves
+        )
+
+    def test_simple_checkmate_position(self):
+        board = Board.from_fen("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
+
+        assert self.gen.is_in_check(board, "black")
+        assert self.gen.is_checkmate(board)
+        assert self.gen.get_game_status(board) == "checkmate"
+        assert self.gen.generate_legal_moves(board) == []
+
+    def test_simple_stalemate_position(self):
+        board = Board.from_fen("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")
+
+        assert not self.gen.is_in_check(board, "black")
+        assert self.gen.is_stalemate(board)
+        assert self.gen.get_game_status(board) == "stalemate"
+        assert self.gen.generate_legal_moves(board) == []
+
+    def test_game_status_check_and_playing(self):
+        checked = Board.from_fen("4r2k/8/8/8/8/8/8/4K3 w - - 0 1")
+        playing = Board.from_fen()
+
+        assert self.gen.get_game_status(checked) == "check"
+        assert self.gen.get_game_status(playing) == "playing"
+
+
+# ==============================================================
+# Test Castling
+# ==============================================================
+
+class TestCastling:
+    def setup_method(self):
+        self.gen = MoveGenerator()
+
+    @pytest.mark.parametrize(
+        ("fen", "destination", "king_square", "rook_square", "color"),
+        [
+            (
+                "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1",
+                "g1",
+                "g1",
+                "f1",
+                "white",
+            ),
+            (
+                "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1",
+                "c1",
+                "c1",
+                "d1",
+                "white",
+            ),
+            (
+                "r3k2r/8/8/8/8/8/8/4K3 b kq - 0 1",
+                "g8",
+                "g8",
+                "f8",
+                "black",
+            ),
+            (
+                "r3k2r/8/8/8/8/8/8/4K3 b kq - 0 1",
+                "c8",
+                "c8",
+                "d8",
+                "black",
+            ),
+        ],
+    )
+    def test_castling_generated_and_executed(
+        self,
+        fen,
+        destination,
+        king_square,
+        rook_square,
+        color,
+    ):
+        board = Board.from_fen(fen)
+        king_from = board.find_king(color)
+        moves = self.gen.generate_legal_moves(board, king_from)
+        castle = next(
+            move for move in moves
+            if move.to_sq == Square.from_algebraic(destination)
+        )
+
+        result = board.make_move(castle)
+
+        assert result.get_piece(Square.from_algebraic(king_square)) == Piece(
+            "king",
+            color,
+        )
+        assert result.get_piece(Square.from_algebraic(rook_square)) == Piece(
+            "rook",
+            color,
+        )
+        assert result.get_piece(king_from) is None
+
+    def test_castling_not_allowed_after_king_moves(self):
+        board = Board.from_fen("4k3/8/8/8/8/8/8/4K2R w K - 0 1")
+        board = board.make_move(Move(Square(7, 4), Square(7, 5)))
+        board = board.make_move(Move(Square(0, 4), Square(0, 5)))
+        board = board.make_move(Move(Square(7, 5), Square(7, 4)))
+
+        moves = self.gen.generate_legal_moves(board, Square(7, 4))
+
+        assert not board.castling.white_king_side
+        assert Square(7, 6) not in [move.to_sq for move in moves]
+
+    def test_castling_not_allowed_after_rook_moves(self):
+        board = Board.from_fen("4k3/8/8/8/8/8/8/4K2R w K - 0 1")
+        board = board.make_move(Move(Square(7, 7), Square(6, 7)))
+        board = board.make_move(Move(Square(0, 4), Square(0, 5)))
+        board = board.make_move(Move(Square(6, 7), Square(7, 7)))
+
+        moves = self.gen.generate_legal_moves(board, Square(7, 4))
+
+        assert not board.castling.white_king_side
+        assert Square(7, 6) not in [move.to_sq for move in moves]
+
+    def test_castling_not_allowed_while_in_check(self):
+        board = Board.from_fen("4r2k/8/8/8/8/8/8/R3K2R w KQ - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(7, 4))
+
+        destinations = {move.to_sq.to_algebraic() for move in moves}
+        assert "g1" not in destinations
+        assert "c1" not in destinations
+
+    def test_castling_not_allowed_through_attacked_square(self):
+        board = Board.from_fen("k4r2/8/8/8/8/8/8/R3K2R w KQ - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(7, 4))
+
+        destinations = {move.to_sq.to_algebraic() for move in moves}
+        assert "g1" not in destinations
+        assert "c1" in destinations
+
+    def test_castling_not_allowed_into_attacked_square(self):
+        board = Board.from_fen("k5r1/8/8/8/8/8/8/R3K2R w KQ - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(7, 4))
+
+        destinations = {move.to_sq.to_algebraic() for move in moves}
+        assert "g1" not in destinations
+        assert "c1" in destinations
+
+    def test_castling_rights_update_after_rook_capture(self):
+        board = Board.from_fen("4k3/8/8/8/8/8/6b1/R3K2R b KQ - 0 1")
+        result = board.make_move(Move(Square(6, 6), Square(7, 7)))
+
+        assert not result.castling.white_king_side
+        assert result.castling.white_queen_side
+        assert result.to_fen().split()[2] == "Q"
+
+
+# ==============================================================
+# Test En Passant
+# ==============================================================
+
+class TestEnPassant:
+    def setup_method(self):
+        self.gen = MoveGenerator()
+
+    @staticmethod
+    def _position_after_e2_e4() -> Board:
+        board = Board.from_fen("4k3/8/8/8/3p4/8/4P3/4K3 w - - 0 1")
+        return board.make_move(Move(Square(6, 4), Square(4, 4)))
+
+    def test_en_passant_target_after_two_square_pawn_move(self):
+        board = self._position_after_e2_e4()
+
+        assert board.en_passant == Square.from_algebraic("e3")
+        assert board.to_fen().split()[3] == "e3"
+
+    def test_en_passant_capture_is_generated(self):
+        board = self._position_after_e2_e4()
+        moves = self.gen.generate_legal_moves(
+            board,
+            Square.from_algebraic("d4"),
+        )
+
+        capture = next(
+            move for move in moves
+            if move.to_sq == Square.from_algebraic("e3")
+        )
+        assert capture.captured == Piece("pawn", "white")
+
+    def test_en_passant_capture_removes_correct_pawn(self):
+        board = self._position_after_e2_e4()
+        move = next(
+            move
+            for move in self.gen.generate_legal_moves(
+                board,
+                Square.from_algebraic("d4"),
+            )
+            if move.to_sq == Square.from_algebraic("e3")
+        )
+
+        result = board.make_move(move)
+
+        assert result.get_piece(Square.from_algebraic("e3")) == Piece(
+            "pawn",
+            "black",
+        )
+        assert result.get_piece(Square.from_algebraic("e4")) is None
+        assert result.get_piece(Square.from_algebraic("d4")) is None
+        assert result.en_passant is None
+
+    def test_en_passant_expires_after_one_move(self):
+        board = self._position_after_e2_e4()
+        board = board.make_move(Move(Square(0, 4), Square(1, 4)))
+
+        assert board.en_passant is None
+
+    def test_en_passant_illegal_if_it_exposes_own_king(self):
+        board = Board.from_fen(
+            "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"
+        )
+        moves = self.gen.generate_legal_moves(
+            board,
+            Square.from_algebraic("e5"),
+        )
+
+        assert Square.from_algebraic("d6") not in [
+            move.to_sq for move in moves
+        ]
+
+
+# ==============================================================
 # Test AI Agents
 # ==============================================================
 
@@ -272,9 +568,8 @@ class TestAgents:
         board = Board.from_fen()
         move = agent.get_move(board)
 
-        # TODO: Uncomment khi MoveGenerator hoàn thiện
-        # assert move is not None
-        # assert isinstance(move, Move)
+        assert move is not None
+        assert isinstance(move, Move)
 
     def test_minimax_agent_returns_move(self):
         """MinimaxAgent phải trả về một nước đi."""
@@ -284,8 +579,8 @@ class TestAgents:
         board = Board.from_fen()
         move = agent.get_move(board)
 
-        # TODO: Uncomment khi MoveGenerator hoàn thiện
-        # assert move is not None
+        assert move is not None
+        assert isinstance(move, Move)
 
     def test_mcts_agent_returns_move(self):
         """MCTSAgent phải trả về một nước đi."""
@@ -295,8 +590,8 @@ class TestAgents:
         board = Board.from_fen()
         move = agent.get_move(board)
 
-        # TODO: Uncomment khi MoveGenerator hoàn thiện
-        # assert move is not None
+        assert move is not None
+        assert isinstance(move, Move)
 
     def test_agent_stats(self):
         """Agent phải trả về stats sau khi suy nghĩ."""
