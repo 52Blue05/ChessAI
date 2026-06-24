@@ -7,6 +7,26 @@
 
 const API_BASE = '/api';
 
+async function parseJsonResponse(response, fallbackMessage) {
+  const text = await response.text();
+  let payload;
+
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    const preview = text.slice(0, 200).replace(/\s+/g, ' ');
+    throw new Error(
+      `Backend returned invalid JSON (${response.status}): ${preview}`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || fallbackMessage);
+  }
+
+  return payload;
+}
+
 /**
  * POST /api/move — Người chơi thực hiện nước đi.
  * @param {string} fen - FEN string hiện tại
@@ -20,12 +40,7 @@ export async function makeMove(fen, move) {
     body: JSON.stringify({ fen, move }),
   });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Move failed');
-  }
-
-  return response.json();
+  return parseJsonResponse(response, 'Move failed');
 }
 
 /**
@@ -42,12 +57,7 @@ export async function getLegalMoves(fen, row, col) {
 
   const response = await fetch(`${API_BASE}/legal-moves?${params}`);
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get legal moves');
-  }
-
-  return response.json();
+  return parseJsonResponse(response, 'Failed to get legal moves');
 }
 
 /**
@@ -69,12 +79,7 @@ export async function getAiMove(fen, algorithm, depth, simulations) {
     body: JSON.stringify(body),
   });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'AI move failed');
-  }
-
-  return response.json();
+  return parseJsonResponse(response, 'AI move failed');
 }
 
 /**
@@ -84,10 +89,5 @@ export async function getAiMove(fen, algorithm, depth, simulations) {
 export async function getBenchmark() {
   const response = await fetch(`${API_BASE}/benchmark`);
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get benchmark');
-  }
-
-  return response.json();
+  return parseJsonResponse(response, 'Failed to get benchmark');
 }

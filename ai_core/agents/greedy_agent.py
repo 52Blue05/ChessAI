@@ -22,19 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.engine.board import Board, Move
 from backend.engine.move_generator import MoveGenerator
-from backend.engine.benchmark_logger import BenchmarkStats
-from .agent import Agent
-
-
-# Giá trị quân cờ (đơn vị: centipawn)
-PIECE_VALUES = {
-    "pawn": 100,
-    "knight": 320,
-    "bishop": 330,
-    "rook": 500,
-    "queen": 900,
-    "king": 20000,
-}
+from .agent import Agent, PIECE_VALUES
 
 
 class GreedyAgent(Agent):
@@ -59,11 +47,16 @@ class GreedyAgent(Agent):
         self._reset_stats()
 
         legal_moves = self.move_generator.generate_legal_moves(board)
+        current_terminal = self.terminal_score(board, legal_moves)
+        if current_terminal is not None:
+            self._last_stats.evaluation_score = float(current_terminal)
+            return None
         if not legal_moves:
             return None
 
         best_move = None
-        best_score = float("-inf")
+        best_selection_score = -self.SEARCH_BOUND
+        best_position_score = 0.0
         color = board.current_player
 
         for move in legal_moves:
@@ -72,48 +65,43 @@ class GreedyAgent(Agent):
             # Thực hiện nước đi trên bản sao
             new_board = board.make_move(move)
 
-            # Đánh giá trạng thái mới
-            score = self.evaluate(new_board)
+            opponent_moves = self.move_generator.generate_legal_moves(new_board)
+            terminal = self.terminal_score(
+                new_board,
+                opponent_moves,
+                ply=1,
+            )
+            position_score = (
+                terminal if terminal is not None else self.evaluate(new_board)
+            )
+            selection_score = (
+                position_score if color == "white" else -position_score
+            )
 
-            # Nếu là bên đen, đảo dấu (vì evaluate luôn đánh giá cho trắng)
-            if color == "black":
-                score = -score
+            # Tie-break theo chiến thuật: promotion/capture/check/center.
+            selection_score += self.move_order_score(board, move) * 0.02
 
-            if score > best_score:
-                best_score = score
+            # Tránh treo quân giá trị cao ngay sau một nước tham lam.
+            moved_piece = new_board.get_piece(move.to_sq)
+            if (
+                terminal is None
+                and moved_piece is not None
+                and self.move_generator.is_square_attacked(
+                    new_board,
+                    move.to_sq,
+                    new_board.current_player,
+                )
+            ):
+                selection_score -= (
+                    PIECE_VALUES.get(moved_piece.piece_type, 0) * 0.5
+                )
+
+            if selection_score > best_selection_score:
+                best_selection_score = selection_score
+                best_position_score = position_score
                 best_move = move
 
         self._last_stats.depth_reached = 1
-        self._last_stats.evaluation_score = best_score
+        self._last_stats.evaluation_score = float(best_position_score)
 
         return best_move
-
-    def evaluate(self, board: Board) -> float:
-        """
-        Hàm lượng giá tĩnh (Static Evaluation Function).
-        Đánh giá dựa trên tổng giá trị quân cờ.
-
-        Điểm dương = trắng có lợi.
-        Điểm âm = đen có lợi.
-
-        TODO: Có thể cải thiện thêm:
-        - Piece-Square Tables (vị trí quân trên bàn)
-        - Kiểm soát trung tâm
-        - An toàn vua
-        - Cấu trúc tốt (doubled pawns, isolated pawns, ...)
-        """
-        score = 0.0
-
-        for r in range(8):
-            for c in range(8):
-                piece = board.grid[r][c]
-                if piece is None:
-                    continue
-
-                value = PIECE_VALUES.get(piece.piece_type, 0)
-                if piece.color == "white":
-                    score += value
-                else:
-                    score -= value
-
-        return score

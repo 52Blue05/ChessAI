@@ -5,6 +5,7 @@ Unit tests cho Board (engine) và AI agents.
 Chạy: pytest tests/ -v
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -151,6 +152,53 @@ class TestBoard:
         assert board.current_player == "black"
         assert board.grid[4][4].piece_type == "pawn"
         assert board.grid[4][4].color == "white"
+
+    def test_valid_fen_is_accepted(self):
+        fen = "4k3/8/8/8/8/8/8/4K3 b - - 17 42"
+
+        board = Board.from_fen(fen)
+
+        assert board.to_fen() == fen
+
+    @pytest.mark.parametrize(
+        ("fen", "message"),
+        [
+            (
+                "8/8/8/8/8/8/8/4K3 w - - 0 1",
+                "exactly one white king and one black king",
+            ),
+            (
+                "4k3/8/8/8/8/8/8/3K3 w - - 0 1",
+                "exactly 8 squares",
+            ),
+            (
+                "4k3/8/8/8/8/8/8/3XK3 w - - 0 1",
+                "Invalid FEN piece symbol",
+            ),
+            (
+                "4k3/8/8/8/8/8/8/4K3 x - - 0 1",
+                "active color",
+            ),
+        ],
+    )
+    def test_invalid_fen_is_rejected(self, fen, message):
+        with pytest.raises(ValueError, match=message):
+            Board.from_fen(fen)
+
+    @pytest.mark.parametrize(
+        "fen",
+        [
+            "4k3/8/8/8/8/8/8/4K3 w - - 0",
+            "4k3/8/8/8/8/8/8/4K3 w KK - 0 1",
+            "4k3/8/8/8/8/8/8/4K3 w A - 0 1",
+            "4k3/8/8/8/8/8/8/4K3 w - z9 0 1",
+            "4k3/8/8/8/8/8/8/4K3 w - - -1 1",
+            "4k3/8/8/8/8/8/8/4K3 w - - 0 0",
+        ],
+    )
+    def test_invalid_fen_metadata_is_rejected(self, fen):
+        with pytest.raises(ValueError):
+            Board.from_fen(fen)
 
 
 # ==============================================================
@@ -357,6 +405,87 @@ class TestChessLegality:
 
 
 # ==============================================================
+# Test Draw Rules
+# ==============================================================
+
+class TestDrawRules:
+    def setup_method(self):
+        self.gen = MoveGenerator()
+
+    def test_fifty_move_rule_draw_at_one_hundred_halfmoves(self):
+        board = Board.from_fen(
+            "4k3/8/8/8/8/8/8/R3K3 w - - 100 51"
+        )
+
+        assert self.gen.get_game_status(board) == "draw"
+
+    def test_pawn_move_resets_halfmove_clock(self):
+        board = Board.from_fen(
+            "4k3/8/8/8/8/8/4P3/4K3 w - - 99 50"
+        )
+
+        result = board.make_move(
+            Move(
+                Square.from_algebraic("e2"),
+                Square.from_algebraic("e3"),
+            )
+        )
+
+        assert result.half_move_clock == 0
+
+    def test_capture_resets_halfmove_clock(self):
+        board = Board.from_fen(
+            "4k3/8/8/8/8/8/n7/R3K3 w - - 99 50"
+        )
+
+        result = board.make_move(
+            Move(
+                Square.from_algebraic("a1"),
+                Square.from_algebraic("a2"),
+            )
+        )
+
+        assert result.half_move_clock == 0
+
+    def test_quiet_non_pawn_move_increments_halfmove_clock(self):
+        board = Board.from_fen(
+            "4k3/8/8/8/8/8/8/1N2K3 w - - 41 21"
+        )
+
+        result = board.make_move(
+            Move(
+                Square.from_algebraic("b1"),
+                Square.from_algebraic("c3"),
+            )
+        )
+
+        assert result.half_move_clock == 42
+
+    @pytest.mark.parametrize(
+        "fen",
+        [
+            "4k3/8/8/8/8/8/8/4K3 w - - 0 1",
+            "4k3/8/8/8/8/8/8/2B1K3 w - - 0 1",
+            "4k3/8/8/8/8/8/8/1N2K3 w - - 0 1",
+            "4kb2/8/8/8/8/8/8/2B1K3 w - - 0 1",
+        ],
+    )
+    def test_insufficient_material_is_draw(self, fen):
+        board = Board.from_fen(fen)
+
+        assert self.gen.is_insufficient_material(board)
+        assert self.gen.get_game_status(board) == "draw"
+
+    def test_opposite_color_bishops_are_not_automatically_insufficient(self):
+        board = Board.from_fen(
+            "4k1b1/8/8/8/8/8/8/2B1K3 w - - 0 1"
+        )
+
+        assert not self.gen.is_insufficient_material(board)
+        assert self.gen.get_game_status(board) == "playing"
+
+
+# ==============================================================
 # Test Castling
 # ==============================================================
 
@@ -560,7 +689,7 @@ class TestEnPassant:
 class TestAgents:
     """Test cơ bản cho các AI agent."""
 
-    def test_greedy_agent_returns_move(self):
+    def test_greedy_agent_returns_legal_move(self):
         """GreedyAgent phải trả về một nước đi."""
         from ai_core.agents import GreedyAgent
 
@@ -570,8 +699,9 @@ class TestAgents:
 
         assert move is not None
         assert isinstance(move, Move)
+        assert move in MoveGenerator().generate_legal_moves(board)
 
-    def test_minimax_agent_returns_move(self):
+    def test_minimax_agent_returns_legal_move(self):
         """MinimaxAgent phải trả về một nước đi."""
         from ai_core.agents import MinimaxAgent
 
@@ -581,17 +711,183 @@ class TestAgents:
 
         assert move is not None
         assert isinstance(move, Move)
+        assert move in MoveGenerator().generate_legal_moves(board)
 
-    def test_mcts_agent_returns_move(self):
+    def test_mcts_agent_returns_legal_move(self):
         """MCTSAgent phải trả về một nước đi."""
         from ai_core.agents import MCTSAgent
 
-        agent = MCTSAgent(simulations=100)
+        agent = MCTSAgent(simulations=5)
         board = Board.from_fen()
         move = agent.get_move(board)
 
         assert move is not None
         assert isinstance(move, Move)
+        assert move in MoveGenerator().generate_legal_moves(board)
+
+    def test_mcts_terminal_score_uses_root_player_perspective(self):
+        from ai_core.agents import MCTSAgent
+
+        agent = MCTSAgent(simulations=1)
+        black_wins = Board.from_fen(
+            "7K/6q1/5k2/8/8/8/8/8 w - - 0 1"
+        )
+
+        black_result, black_depth = agent._simulate(
+            black_wins,
+            root_player="black",
+        )
+        white_result, white_depth = agent._simulate(
+            black_wins,
+            root_player="white",
+        )
+
+        assert black_result == 1.0
+        assert white_result == 0.0
+        assert black_depth == white_depth == 0
+
+    def test_mcts_prefers_mate_in_one_with_one_simulation(self):
+        from ai_core.agents import MCTSAgent
+
+        generator = MoveGenerator()
+        board = Board.from_fen("7k/8/5KQ1/8/8/8/8/8 w - - 0 1")
+        agent = MCTSAgent(simulations=1)
+
+        move = agent.get_move(board)
+
+        assert move in generator.generate_legal_moves(board)
+        assert generator.get_game_status(board.make_move(move)) == "checkmate"
+        assert math.isfinite(agent.get_stats().evaluation_score)
+        assert agent.get_stats().evaluation_score > 900_000
+
+    def test_minimax_finds_mate_in_one(self):
+        from ai_core.agents import MinimaxAgent
+
+        generator = MoveGenerator()
+        board = Board.from_fen("7k/8/5KQ1/8/8/8/8/8 w - - 0 1")
+        agent = MinimaxAgent(depth=2)
+
+        move = agent.get_move(board)
+
+        assert move in generator.generate_legal_moves(board)
+        assert generator.get_game_status(board.make_move(move)) == "checkmate"
+        assert math.isfinite(agent.get_stats().evaluation_score)
+        assert agent.get_stats().evaluation_score > 900_000
+
+    def test_shared_evaluation_uses_white_positive_convention(self):
+        from ai_core.agents import GreedyAgent
+
+        agent = GreedyAgent()
+        white_advantage = Board.from_fen(
+            "4k3/8/8/8/8/8/8/Q3K3 w - - 0 1"
+        )
+        black_advantage = Board.from_fen(
+            "q3k3/8/8/8/8/8/8/4K3 w - - 0 1"
+        )
+
+        assert agent.evaluate(white_advantage) > 0
+        assert agent.evaluate(black_advantage) < 0
+
+    def test_greedy_prefers_free_queen_capture(self):
+        from ai_core.agents import GreedyAgent
+
+        board = Board.from_fen("4k3/8/8/8/8/8/q7/R3K3 w Q - 0 1")
+        agent = GreedyAgent()
+
+        move = agent.get_move(board)
+
+        assert move.from_sq == Square.from_algebraic("a1")
+        assert move.to_sq == Square.from_algebraic("a2")
+        assert move.captured == Piece("queen", "black")
+
+    def test_minimax_does_not_play_self_check_move(self):
+        from ai_core.agents import MinimaxAgent
+
+        generator = MoveGenerator()
+        board = Board.from_fen("k3r3/8/8/8/8/8/4R3/4K3 w - - 0 1")
+        agent = MinimaxAgent(depth=2)
+
+        move = agent.get_move(board)
+
+        assert move in generator.generate_legal_moves(board)
+        result = board.make_move(move)
+        assert not generator.is_in_check(result, "white")
+        if move.from_sq == Square.from_algebraic("e2"):
+            assert move.to_sq.col == Square.from_algebraic("e2").col
+
+    def test_minimax_avoids_allowing_immediate_checkmate(self):
+        from ai_core.agents import MinimaxAgent
+
+        generator = MoveGenerator()
+        board = Board.from_fen(
+            "4k3/8/2b5/8/8/7q/5P1P/R5K1 w - - 0 1"
+        )
+
+        blunder = next(
+            move
+            for move in generator.generate_legal_moves(board)
+            if move.to_uci() == "a1b1"
+        )
+        blunder_board = board.make_move(blunder)
+        assert any(
+            generator.get_game_status(blunder_board.make_move(reply))
+            == "checkmate"
+            for reply in generator.generate_legal_moves(blunder_board)
+        )
+
+        agent = MinimaxAgent(depth=2)
+        move = agent.get_move(board)
+        result = board.make_move(move)
+
+        assert move in generator.generate_legal_moves(board)
+        assert not any(
+            generator.get_game_status(result.make_move(reply)) == "checkmate"
+            for reply in generator.generate_legal_moves(result)
+        )
+
+    @pytest.mark.parametrize(
+        "agent_name",
+        ["greedy", "minimax", "mcts"],
+    )
+    def test_agents_stop_on_insufficient_material_draw(self, agent_name):
+        from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
+
+        factories = {
+            "greedy": lambda: GreedyAgent(),
+            "minimax": lambda: MinimaxAgent(depth=2),
+            "mcts": lambda: MCTSAgent(simulations=2),
+        }
+        agent = factories[agent_name]()
+        board = Board.from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+
+        assert agent.get_move(board) is None
+        assert agent.get_stats().evaluation_score == 0.0
+        assert math.isfinite(agent.get_stats().evaluation_score)
+
+    @pytest.mark.parametrize(
+        ("agent_name", "search_size"),
+        [
+            ("greedy", None),
+            ("minimax", 1),
+            ("mcts", 2),
+        ],
+    )
+    def test_agent_search_stats_are_finite(self, agent_name, search_size):
+        from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
+
+        factories = {
+            "greedy": lambda: GreedyAgent(),
+            "minimax": lambda: MinimaxAgent(depth=search_size),
+            "mcts": lambda: MCTSAgent(simulations=search_size),
+        }
+        agent = factories[agent_name]()
+        move = agent.get_move(Board.from_fen())
+        stats = agent.get_stats()
+
+        assert move is not None
+        assert stats.algorithm == agent_name
+        assert math.isfinite(stats.evaluation_score)
+        assert stats.nodes_evaluated > 0
 
     def test_agent_stats(self):
         """Agent phải trả về stats sau khi suy nghĩ."""

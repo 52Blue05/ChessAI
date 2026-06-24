@@ -9,6 +9,8 @@ API Contract:
     GET  /api/benchmark    — Lấy kết quả benchmark
 """
 
+import math
+
 from flask import Blueprint, request, jsonify
 from backend.engine.board import Board, Square, Move
 from backend.engine.move_generator import MoveGenerator
@@ -25,7 +27,7 @@ benchmark_logger = BenchmarkLogger()
 # Registry các AI agent
 AGENTS = {
     "greedy": GreedyAgent(),
-    "minimax": MinimaxAgent(),
+    "minimax": MinimaxAgent(depth=2),
     "mcts": MCTSAgent(simulations=100),
 }
 
@@ -69,22 +71,22 @@ def make_move():
         )
 
         if move is None:
-            return jsonify({"error": "Nước đi không hợp lệ"}), 400
+            return _json_response({"error": "Nước đi không hợp lệ"}, 400)
 
         # Thực hiện nước đi
         new_board = board.make_move(move)
         game_state = _serialize_game_state(new_board)
 
-        return jsonify({
+        return _json_response({
             "move": _serialize_move(move),
             "newFen": game_state["fen"],
             "gameState": game_state,
         })
 
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify({"error": str(e)}), 400
+        return _json_response({"error": str(e)}, 400)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _json_response({"error": str(e)}, 500)
 
 
 # ==============================================================
@@ -100,7 +102,7 @@ def get_legal_moves():
     """
     fen = request.args.get("fen")
     if not fen:
-        return jsonify({"error": "Missing 'fen' parameter"}), 400
+        return _json_response({"error": "Missing 'fen' parameter"}, 400)
 
     try:
         board = Board.from_fen(fen)
@@ -113,11 +115,11 @@ def get_legal_moves():
 
         moves = move_generator.generate_legal_moves(board, square)
 
-        return jsonify({
+        return _json_response({
             "moves": [_serialize_move(m) for m in moves],
         })
     except (TypeError, ValueError, IndexError) as e:
-        return jsonify({"error": str(e)}), 400
+        return _json_response({"error": str(e)}, 400)
 
 
 # ==============================================================
@@ -130,32 +132,39 @@ def get_ai_move():
     {
         "fen": "...",
         "algorithm": "greedy" | "minimax" | "mcts",
-        "depth": 3,           // optional, dùng cho minimax
+        "depth": 2,           // optional, dùng cho minimax
         "simulations": 100    // optional, dùng cho mcts
     }
     """
     data = request.get_json(silent=True) or {}
     try:
         fen = data["fen"]
-        algorithm = data.get("algorithm", "greedy")
+        algorithm = data.get("algorithm", "minimax")
         board = Board.from_fen(fen)
 
         agent = AGENTS.get(algorithm)
         if agent is None:
-            return jsonify({"error": f"Unknown algorithm: {algorithm}"}), 400
+            return _json_response({
+                "error": f"Unknown algorithm: {algorithm}",
+            }, 400)
 
         # Cấu hình agent (nếu có)
         if hasattr(agent, "set_depth"):
-            depth = int(data.get("depth", 3))
-            if not 1 <= depth <= 6:
-                return jsonify({"error": "Depth must be between 1 and 6"}), 400
+            depth = int(data.get("depth", 2))
+            if not 1 <= depth <= MinimaxAgent.MAX_DEPTH:
+                return _json_response({
+                    "error": (
+                        f"Depth must be between 1 and "
+                        f"{MinimaxAgent.MAX_DEPTH}"
+                    ),
+                }, 400)
             agent.set_depth(depth)
         if hasattr(agent, "set_simulations"):
             simulations = int(data.get("simulations", 100))
             if not 1 <= simulations <= 10000:
-                return jsonify({
+                return _json_response({
                     "error": "Simulations must be between 1 and 10000",
-                }), 400
+                }, 400)
             agent.set_simulations(simulations)
 
         # AI suy nghĩ
@@ -164,10 +173,10 @@ def get_ai_move():
         thinking_time = benchmark_logger.stop_timer()
 
         if move is None:
-            return jsonify({
+            return _json_response({
                 "error": "AI không tìm được nước đi",
                 "gameState": _serialize_game_state(board),
-            }), 400
+            }, 400)
 
         # Lấy stats
         stats = agent.get_stats()
@@ -189,7 +198,7 @@ def get_ai_move():
             game_result=status if status in ["checkmate", "stalemate", "draw"] else "ongoing",
         )
 
-        return jsonify({
+        return _json_response({
             "move": _serialize_move(move),
             "newFen": game_state["fen"],
             "gameState": game_state,
@@ -203,9 +212,9 @@ def get_ai_move():
         })
 
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify({"error": str(e)}), 400
+        return _json_response({"error": str(e)}, 400)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _json_response({"error": str(e)}, 500)
 
 
 # ==============================================================
@@ -218,18 +227,37 @@ def get_benchmark():
         summary = benchmark_logger.get_summary_by_algorithm()
         records = benchmark_logger.read_all_records()
 
-        return jsonify({
+        return _json_response({
             "summary": summary,
             "totalRecords": len(records),
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _json_response({"error": str(e)}, 500)
 
 
 # ==============================================================
 # Helpers
 # ==============================================================
+
+def _sanitize_json_value(value):
+    """Recursively replace non-finite floats with JSON null."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_json_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json_value(item) for item in value]
+    return value
+
+
+def _json_response(payload: dict, status: int = 200):
+    """Create a browser-safe strict JSON response."""
+    return jsonify(_sanitize_json_value(payload)), status
+
 
 def _serialize_move(move: Move) -> dict:
     """Chuyển đổi Move object sang JSON-serializable dict."""

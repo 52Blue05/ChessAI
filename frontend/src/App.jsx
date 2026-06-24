@@ -23,9 +23,22 @@ function App() {
     handleAlgorithmChange,
     handleDepthChange,
     handleSimulationsChange,
+    handleStartAutoPlay,
+    handlePauseAutoPlay,
+    handleStepAutoPlay,
+    handleAutoPlayDelayChange,
+    handleMaxAutoPliesChange,
+    setWhiteAiAlgorithm,
+    setBlackAiAlgorithm,
     algorithm,
     depth,
     simulations,
+    whiteAiAlgorithm,
+    blackAiAlgorithm,
+    isAutoPlaying,
+    autoPlayDelay,
+    maxAutoPlies,
+    autoPlayPlies,
     isThinking,
     error,
   } = useGame();
@@ -46,7 +59,7 @@ function App() {
             gameState={gameState}
             selectedSquare={selectedSquare}
             legalMoves={legalMoves}
-            onSquareClick={handleSquareClick}
+            onSquareClick={isAutoPlaying ? undefined : handleSquareClick}
           />
 
           {/* Điều khiển */}
@@ -54,6 +67,12 @@ function App() {
             algorithm={algorithm}
             depth={depth}
             simulations={simulations}
+            whiteAiAlgorithm={whiteAiAlgorithm}
+            blackAiAlgorithm={blackAiAlgorithm}
+            isAutoPlaying={isAutoPlaying}
+            autoPlayDelay={autoPlayDelay}
+            maxAutoPlies={maxAutoPlies}
+            autoPlayPlies={autoPlayPlies}
             isThinking={isThinking}
             error={error}
             stats={stats}
@@ -61,6 +80,13 @@ function App() {
             onAlgorithmChange={handleAlgorithmChange}
             onDepthChange={handleDepthChange}
             onSimulationsChange={handleSimulationsChange}
+            onWhiteAiAlgorithmChange={setWhiteAiAlgorithm}
+            onBlackAiAlgorithmChange={setBlackAiAlgorithm}
+            onStartAutoPlay={handleStartAutoPlay}
+            onPauseAutoPlay={handlePauseAutoPlay}
+            onStepAutoPlay={handleStepAutoPlay}
+            onAutoPlayDelayChange={handleAutoPlayDelayChange}
+            onMaxAutoPliesChange={handleMaxAutoPliesChange}
             onAiMove={handleAiMove}
             onNewGame={handleNewGame}
             onToggleBenchmark={() => setShowBenchmark(!showBenchmark)}

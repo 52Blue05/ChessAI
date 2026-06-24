@@ -112,9 +112,11 @@ body {
    ============================================================ */
 .chess-board {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  width: 480px;
-  height: 480px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
+  width: min(90vw, 480px);
+  max-width: 480px;
+  aspect-ratio: 1 / 1;
   border-radius: var(--radius);
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -125,7 +127,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.5rem;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  font-size: clamp(1.6rem, 8vw, 2.5rem);
+  line-height: 1;
   cursor: pointer;
   position: relative;
   transition: all 0.15s ease;
@@ -164,6 +171,28 @@ body {
 
 .chess-square:hover {
   filter: brightness(1.1);
+}
+
+.chess-piece {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.chess-piece.white-piece {
+  color: #f8fafc;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.chess-piece.black-piece {
+  color: #111827;
+  text-shadow:
+    0 1px 2px rgba(255, 255, 255, 0.75),
+    0 0 1px rgba(255, 255, 255, 0.9);
 }
 
 /* ============================================================
@@ -256,6 +285,51 @@ body {
 .btn-secondary:hover {
   background: var(--color-surface-hover);
   border-color: var(--color-primary);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auto-play-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.auto-play-panel h3 {
+  margin-bottom: 1rem;
+  color: var(--color-primary);
+  font-size: 1rem;
+}
+
+.auto-play-panel .control-group {
+  margin-bottom: 0.85rem;
+}
+
+.auto-play-inputs,
+.auto-play-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.auto-play-actions .btn {
+  height: 100%;
+}
+
+.auto-play-status {
+  margin-bottom: 0.75rem;
+  color: var(--color-success);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.auto-play-note {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
 }
 
 /* Stats Panel */
@@ -421,7 +495,6 @@ body {
 
   .chess-board {
     width: min(90vw, 480px);
-    height: min(90vw, 480px);
   }
 
   .game-controls {

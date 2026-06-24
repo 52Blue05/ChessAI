@@ -3,11 +3,13 @@
  * Custom hook quản lý game state và tương tác với backend API.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { makeMove, getLegalMoves, getAiMove } from '../api.js';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const TERMINAL_STATUSES = new Set(['checkmate', 'stalemate', 'draw']);
+const AUTO_PLAY_DEPTH = 2;
+const AUTO_PLAY_SIMULATIONS = 100;
 const FEN_PIECES = {
   k: { type: 'king', color: 'black' },
   q: { type: 'queen', color: 'black' },
@@ -76,15 +78,27 @@ export function useGame() {
   const [legalMoves, setLegalMoves] = useState([]);
   const [stats, setStats] = useState(null);
   const [benchmarkData, setBenchmarkData] = useState(null);
-  const [algorithm, setAlgorithm] = useState('greedy');
-  const [depth, setDepth] = useState(3);
+  const [algorithm, setAlgorithm] = useState('minimax');
+  const [depth, setDepth] = useState(2);
   const [simulations, setSimulations] = useState(100);
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState(null);
+  const [whiteAiAlgorithm, setWhiteAiAlgorithm] = useState('minimax');
+  const [blackAiAlgorithm, setBlackAiAlgorithm] = useState('greedy');
+  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const [autoPlayDelay, setAutoPlayDelay] = useState(500);
+  const [maxAutoPlies, setMaxAutoPlies] = useState(200);
+  const [autoPlayPlies, setAutoPlayPlies] = useState(0);
+  const aiRequestInFlight = useRef(false);
+  const gameGeneration = useRef(0);
 
   // Click vào ô trên bàn cờ
   const handleSquareClick = useCallback(async (row, col) => {
-    if (isThinking || TERMINAL_STATUSES.has(gameState.status)) {
+    if (
+      isThinking
+      || isAutoPlaying
+      || TERMINAL_STATUSES.has(gameState.status)
+    ) {
       return;
     }
 
@@ -145,14 +159,22 @@ export function useGame() {
         setError(error.message);
       }
     }
-  }, [gameState, selectedSquare, legalMoves, isThinking]);
+  }, [gameState, selectedSquare, legalMoves, isThinking, isAutoPlaying]);
 
-  // AI đi
-  const handleAiMove = useCallback(async () => {
-    if (TERMINAL_STATUSES.has(gameState.status)) {
-      return;
+  const requestAiMove = useCallback(async (
+    selectedAlgorithm,
+    selectedDepth,
+    selectedSimulations,
+  ) => {
+    if (
+      aiRequestInFlight.current
+      || TERMINAL_STATUSES.has(gameState.status)
+    ) {
+      return false;
     }
 
+    aiRequestInFlight.current = true;
+    const requestGeneration = gameGeneration.current;
     setIsThinking(true);
     setError(null);
     setSelectedSquare(null);
@@ -161,27 +183,143 @@ export function useGame() {
     try {
       const response = await getAiMove(
         gameState.fen,
-        algorithm,
-        depth,
-        simulations,
+        selectedAlgorithm,
+        selectedDepth,
+        selectedSimulations,
       );
+      if (requestGeneration !== gameGeneration.current) {
+        return false;
+      }
       setGameState(response.gameState);
       setStats(response.stats);
+      if (TERMINAL_STATUSES.has(response.gameState.status)) {
+        setIsAutoPlaying(false);
+      }
+      return true;
     } catch (error) {
+      if (requestGeneration !== gameGeneration.current) {
+        return false;
+      }
       console.error('AI move failed:', error);
       setError(error.message);
+      setIsAutoPlaying(false);
+      return false;
     } finally {
+      aiRequestInFlight.current = false;
       setIsThinking(false);
     }
-  }, [gameState, algorithm, depth, simulations]);
+  }, [gameState]);
+
+  // AI đi trong chế độ người-vs-AI hiện tại.
+  const handleAiMove = useCallback(async () => {
+    if (isAutoPlaying) {
+      return;
+    }
+    await requestAiMove(algorithm, depth, simulations);
+  }, [isAutoPlaying, requestAiMove, algorithm, depth, simulations]);
+
+  const handleStepAutoPlay = useCallback(async () => {
+    if (
+      isAutoPlaying
+      || autoPlayPlies >= maxAutoPlies
+      || TERMINAL_STATUSES.has(gameState.status)
+    ) {
+      return;
+    }
+
+    const selectedAlgorithm = (
+      gameState.currentPlayer === 'white'
+        ? whiteAiAlgorithm
+        : blackAiAlgorithm
+    );
+    const moved = await requestAiMove(
+      selectedAlgorithm,
+      AUTO_PLAY_DEPTH,
+      AUTO_PLAY_SIMULATIONS,
+    );
+    if (moved) {
+      setAutoPlayPlies(count => count + 1);
+    }
+  }, [
+    isAutoPlaying,
+    autoPlayPlies,
+    maxAutoPlies,
+    gameState,
+    whiteAiAlgorithm,
+    blackAiAlgorithm,
+    requestAiMove,
+  ]);
+
+  const handleStartAutoPlay = useCallback(() => {
+    if (
+      aiRequestInFlight.current
+      || TERMINAL_STATUSES.has(gameState.status)
+    ) {
+      return;
+    }
+
+    setError(null);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setAutoPlayPlies(0);
+    setIsAutoPlaying(true);
+  }, [gameState.status]);
+
+  const handlePauseAutoPlay = useCallback(() => {
+    setIsAutoPlaying(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoPlaying) {
+      return undefined;
+    }
+
+    if (
+      autoPlayPlies >= maxAutoPlies
+      || TERMINAL_STATUSES.has(gameState.status)
+    ) {
+      setIsAutoPlaying(false);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(async () => {
+      const selectedAlgorithm = (
+        gameState.currentPlayer === 'white'
+          ? whiteAiAlgorithm
+          : blackAiAlgorithm
+      );
+      const moved = await requestAiMove(
+        selectedAlgorithm,
+        AUTO_PLAY_DEPTH,
+        AUTO_PLAY_SIMULATIONS,
+      );
+      if (moved) {
+        setAutoPlayPlies(count => count + 1);
+      }
+    }, autoPlayDelay);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    isAutoPlaying,
+    autoPlayPlies,
+    maxAutoPlies,
+    autoPlayDelay,
+    gameState,
+    whiteAiAlgorithm,
+    blackAiAlgorithm,
+    requestAiMove,
+  ]);
 
   // Ván mới
   const handleNewGame = useCallback(() => {
+    gameGeneration.current += 1;
+    setIsAutoPlaying(false);
     setGameState(createGameStateFromFen(STARTING_FEN));
     setSelectedSquare(null);
     setLegalMoves([]);
     setStats(null);
     setError(null);
+    setAutoPlayPlies(0);
   }, []);
 
   // Đổi thuật toán
@@ -202,6 +340,18 @@ export function useGame() {
     }
   }, []);
 
+  const handleAutoPlayDelayChange = useCallback((value) => {
+    if (Number.isFinite(value)) {
+      setAutoPlayDelay(Math.min(5000, Math.max(100, value)));
+    }
+  }, []);
+
+  const handleMaxAutoPliesChange = useCallback((value) => {
+    if (Number.isFinite(value)) {
+      setMaxAutoPlies(Math.min(1000, Math.max(1, value)));
+    }
+  }, []);
+
   return {
     gameState,
     selectedSquare,
@@ -214,9 +364,22 @@ export function useGame() {
     handleAlgorithmChange,
     handleDepthChange,
     handleSimulationsChange,
+    handleStartAutoPlay,
+    handlePauseAutoPlay,
+    handleStepAutoPlay,
+    handleAutoPlayDelayChange,
+    handleMaxAutoPliesChange,
+    setWhiteAiAlgorithm,
+    setBlackAiAlgorithm,
     algorithm,
     depth,
     simulations,
+    whiteAiAlgorithm,
+    blackAiAlgorithm,
+    isAutoPlaying,
+    autoPlayDelay,
+    maxAutoPlies,
+    autoPlayPlies,
     isThinking,
     error,
   };

@@ -61,7 +61,14 @@ function ChessBoard({ gameState, selectedSquare, legalMoves = [], onSquareClick 
               id={`square-${r}-${c}`}
               onClick={() => onSquareClick?.(r, c)}
             >
-              {piece && getPieceSymbol(piece)}
+              {piece && (
+                <span
+                  className={`chess-piece ${piece.color}-piece`}
+                  aria-label={`${piece.color} ${piece.type}`}
+                >
+                  {getPieceSymbol(piece)}
+                </span>
+              )}
             </div>
           );
         })

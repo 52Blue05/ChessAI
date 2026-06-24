@@ -33,6 +33,12 @@ function GameControls({
   algorithm,
   depth,
   simulations,
+  whiteAiAlgorithm,
+  blackAiAlgorithm,
+  isAutoPlaying,
+  autoPlayDelay,
+  maxAutoPlies,
+  autoPlayPlies,
   isThinking,
   error,
   stats,
@@ -40,6 +46,13 @@ function GameControls({
   onAlgorithmChange,
   onDepthChange,
   onSimulationsChange,
+  onWhiteAiAlgorithmChange,
+  onBlackAiAlgorithmChange,
+  onStartAutoPlay,
+  onPauseAutoPlay,
+  onStepAutoPlay,
+  onAutoPlayDelayChange,
+  onMaxAutoPliesChange,
   onAiMove,
   onNewGame,
   onToggleBenchmark,
@@ -87,7 +100,7 @@ function GameControls({
             id="input-depth"
             type="number"
             min="1"
-            max="6"
+            max="4"
             value={depth}
             onChange={(e) => onDepthChange?.(parseInt(e.target.value))}
           />
@@ -117,6 +130,7 @@ function GameControls({
         onClick={onAiMove}
         disabled={
           isThinking
+          || isAutoPlaying
           || status === 'checkmate'
           || status === 'stalemate'
           || status === 'draw'
@@ -132,6 +146,120 @@ function GameControls({
       <button className="btn btn-secondary" id="btn-benchmark" onClick={onToggleBenchmark}>
         📊 Benchmark
       </button>
+
+      <div className="auto-play-panel">
+        <h3>♟ AI vs AI</h3>
+
+        <div className="control-group">
+          <label htmlFor="select-white-ai">AI Trắng</label>
+          <select
+            id="select-white-ai"
+            value={whiteAiAlgorithm}
+            disabled={isAutoPlaying}
+            onChange={(e) => onWhiteAiAlgorithmChange?.(e.target.value)}
+          >
+            {ALGORITHMS.map(alg => (
+              <option key={`white-${alg.value}`} value={alg.value}>
+                {alg.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="control-group">
+          <label htmlFor="select-black-ai">AI Đen</label>
+          <select
+            id="select-black-ai"
+            value={blackAiAlgorithm}
+            disabled={isAutoPlaying}
+            onChange={(e) => onBlackAiAlgorithmChange?.(e.target.value)}
+          >
+            {ALGORITHMS.map(alg => (
+              <option key={`black-${alg.value}`} value={alg.value}>
+                {alg.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="auto-play-inputs">
+          <div className="control-group">
+            <label htmlFor="input-auto-delay">Delay (ms)</label>
+            <input
+              id="input-auto-delay"
+              type="number"
+              min="100"
+              max="5000"
+              step="100"
+              value={autoPlayDelay}
+              disabled={isAutoPlaying}
+              onChange={(e) => onAutoPlayDelayChange?.(parseInt(e.target.value))}
+            />
+          </div>
+
+          <div className="control-group">
+            <label htmlFor="input-max-plies">Max plies</label>
+            <input
+              id="input-max-plies"
+              type="number"
+              min="1"
+              max="1000"
+              value={maxAutoPlies}
+              disabled={isAutoPlaying}
+              onChange={(e) => onMaxAutoPliesChange?.(parseInt(e.target.value))}
+            />
+          </div>
+        </div>
+
+        <p className="auto-play-status">
+          {isAutoPlaying ? 'Đang chạy' : 'Đã dừng'} · Ply {autoPlayPlies}/{maxAutoPlies}
+        </p>
+
+        <button
+          className="btn btn-primary"
+          id="btn-start-auto-play"
+          onClick={onStartAutoPlay}
+          disabled={
+            isAutoPlaying
+            || isThinking
+            || status === 'checkmate'
+            || status === 'stalemate'
+            || status === 'draw'
+          }
+        >
+          ▶ Start AI vs AI
+        </button>
+
+        <div className="auto-play-actions">
+          <button
+            className="btn btn-secondary"
+            id="btn-pause-auto-play"
+            onClick={onPauseAutoPlay}
+            disabled={!isAutoPlaying}
+          >
+            ⏸ Pause / Stop
+          </button>
+          <button
+            className="btn btn-secondary"
+            id="btn-step-auto-play"
+            onClick={onStepAutoPlay}
+            disabled={
+              isAutoPlaying
+              || isThinking
+              || autoPlayPlies >= maxAutoPlies
+              || status === 'checkmate'
+              || status === 'stalemate'
+              || status === 'draw'
+            }
+          >
+            ⏭ Step AI Move
+          </button>
+        </div>
+
+        <p className="auto-play-note">
+          Auto-play dùng Minimax depth 2 và MCTS 100 simulations.
+        </p>
+      </div>
 
       {error && (
         <p style={{ color: 'var(--color-accent)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>

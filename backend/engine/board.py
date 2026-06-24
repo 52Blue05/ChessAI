@@ -108,28 +108,77 @@ class Board:
 
     @staticmethod
     def from_fen(fen: str = STARTING_FEN) -> "Board":
-        """Tạo Board từ chuỗi FEN."""
+        """Tạo Board từ chuỗi FEN và từ chối dữ liệu không hợp lệ."""
+        if not isinstance(fen, str):
+            raise ValueError("FEN must be a string")
+
         parts = fen.split()
+        if len(parts) != 6:
+            raise ValueError("FEN must contain exactly 6 fields")
+
         board = Board()
 
         # 1. Piece placement
         rows = parts[0].split("/")
+        if len(rows) != 8:
+            raise ValueError("FEN board must contain exactly 8 ranks")
+
+        king_counts = {"white": 0, "black": 0}
         for r, row_str in enumerate(rows):
             col = 0
             for ch in row_str:
-                if ch.isdigit():
-                    col += int(ch)
-                else:
-                    piece_info = FEN_PIECE_MAP.get(ch)
-                    if piece_info:
-                        board.grid[r][col] = Piece(piece_info[0], piece_info[1])
-                    col += 1
+                if ch in "12345678":
+                    empty_count = int(ch)
+                    if not 1 <= empty_count <= 8:
+                        raise ValueError(
+                            f"Invalid empty-square count in FEN rank {8 - r}"
+                        )
+                    col += empty_count
+                    if col > 8:
+                        raise ValueError(
+                            f"FEN rank {8 - r} contains more than 8 squares"
+                        )
+                    continue
+
+                piece_info = FEN_PIECE_MAP.get(ch)
+                if piece_info is None:
+                    raise ValueError(f"Invalid FEN piece symbol: {ch}")
+                if col >= 8:
+                    raise ValueError(
+                        f"FEN rank {8 - r} contains more than 8 squares"
+                    )
+
+                piece = Piece(piece_info[0], piece_info[1])
+                board.grid[r][col] = piece
+                if piece.piece_type == "king":
+                    king_counts[piece.color] += 1
+                col += 1
+
+            if col != 8:
+                raise ValueError(
+                    f"FEN rank {8 - r} must contain exactly 8 squares"
+                )
+
+        if king_counts["white"] != 1 or king_counts["black"] != 1:
+            raise ValueError(
+                "FEN must contain exactly one white king and one black king"
+            )
 
         # 2. Active color
+        if parts[1] not in {"w", "b"}:
+            raise ValueError("FEN active color must be 'w' or 'b'")
         board.current_player = "white" if parts[1] == "w" else "black"
 
         # 3. Castling availability
         castling_str = parts[2]
+        if castling_str != "-":
+            if any(ch not in "KQkq" for ch in castling_str):
+                raise ValueError(
+                    "FEN castling field must be '-' or contain only KQkq"
+                )
+            if len(set(castling_str)) != len(castling_str):
+                raise ValueError("FEN castling field contains duplicates")
+
         board.castling = CastlingRights(
             white_king_side="K" in castling_str,
             white_queen_side="Q" in castling_str,
@@ -139,13 +188,29 @@ class Board:
 
         # 4. En passant target square
         if parts[3] != "-":
-            board.en_passant = Square.from_algebraic(parts[3])
+            en_passant = parts[3]
+            if (
+                len(en_passant) != 2
+                or en_passant[0] not in "abcdefgh"
+                or en_passant[1] not in "12345678"
+            ):
+                raise ValueError(
+                    "FEN en passant field must be '-' or a valid square"
+                )
+            board.en_passant = Square.from_algebraic(en_passant)
         else:
             board.en_passant = None
 
         # 5. Halfmove clock & fullmove number
+        if not parts[4].isascii() or not parts[4].isdecimal():
+            raise ValueError("FEN halfmove clock must be a non-negative integer")
+        if not parts[5].isascii() or not parts[5].isdecimal():
+            raise ValueError("FEN fullmove number must be a positive integer")
+
         board.half_move_clock = int(parts[4])
         board.full_move_number = int(parts[5])
+        if board.full_move_number < 1:
+            raise ValueError("FEN fullmove number must be a positive integer")
 
         return board
 

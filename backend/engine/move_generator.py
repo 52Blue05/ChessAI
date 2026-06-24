@@ -431,6 +431,41 @@ class MoveGenerator:
             return False
         return len(self.generate_legal_moves(board)) == 0
 
+    def is_insufficient_material(self, board: Board) -> bool:
+        """
+        Kiểm tra các trạng thái không thể chiếu hết bằng vật chất còn lại.
+
+        Hỗ trợ K vs K, K+B vs K, K+N vs K và K+B vs K+B khi hai
+        tượng nằm trên các ô cùng màu.
+        """
+        non_king_pieces = []
+        for row in range(8):
+            for col in range(8):
+                piece = board.grid[row][col]
+                if piece is not None and piece.piece_type != "king":
+                    non_king_pieces.append((piece, Square(row, col)))
+
+        if not non_king_pieces:
+            return True
+
+        if len(non_king_pieces) == 1:
+            piece, _ = non_king_pieces[0]
+            return piece.piece_type in {"bishop", "knight"}
+
+        if len(non_king_pieces) == 2:
+            (first_piece, first_square), (second_piece, second_square) = (
+                non_king_pieces
+            )
+            return (
+                first_piece.piece_type == "bishop"
+                and second_piece.piece_type == "bishop"
+                and first_piece.color != second_piece.color
+                and (first_square.row + first_square.col) % 2
+                == (second_square.row + second_square.col) % 2
+            )
+
+        return False
+
     def get_game_status(self, board: Board) -> str:
         """
         Xác định trạng thái ván đấu.
@@ -443,6 +478,8 @@ class MoveGenerator:
         if self.is_stalemate(board):
             return "stalemate"
         if board.half_move_clock >= 100:
+            return "draw"
+        if self.is_insufficient_material(board):
             return "draw"
         if self.is_in_check(board, board.current_player):
             return "check"
