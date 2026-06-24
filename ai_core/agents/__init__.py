@@ -1,4 +1,4 @@
-# ai-core/agents/__init__.py
+# ai_core/agents/__init__.py
 from .agent import Agent
 from .greedy_agent import GreedyAgent
 from .minimax_agent import MinimaxAgent

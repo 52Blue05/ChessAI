@@ -13,7 +13,7 @@ services:
       - "8080:8080"
     volumes:
       - ./backend:/app/backend
-      - ./ai-core:/app/ai_core
+      - ./ai_core:/app/ai_core
       - ./benchmark_results.csv:/app/benchmark_results.csv
     environment:
       - FLASK_ENV=development

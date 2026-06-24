@@ -2,7 +2,7 @@
 backend/app.py
 Flask application entry point.
 
-Chạy: python app.py
+Chạy từ repository root: python -m backend.app
 Server: http://localhost:8080
 """
 
@@ -30,5 +30,5 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    print("🏰 Chess AI Backend running at http://localhost:8080")
+    print("Chess AI Backend running at http://localhost:8080")
     app.run(host="0.0.0.0", port=8080, debug=True)

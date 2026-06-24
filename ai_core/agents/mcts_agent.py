@@ -1,5 +1,5 @@
 """
-ai-core/agents/mcts_agent.py
+ai_core/agents/mcts_agent.py
 Monte Carlo Tree Search (MCTS) — Tìm kiếm cây Monte Carlo.
 
 Vai trò: Thuật toán hiện đại dựa trên xác suất thống kê.

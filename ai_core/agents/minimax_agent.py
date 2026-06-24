@@ -1,5 +1,5 @@
 """
-ai-core/agents/minimax_agent.py
+ai_core/agents/minimax_agent.py
 Minimax kết hợp Cắt tỉa Alpha-Beta (Alpha-Beta Pruning).
 
 Vai trò: Thuật toán cốt lõi truyền thống.

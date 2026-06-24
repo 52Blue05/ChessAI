@@ -1,5 +1,5 @@
 """
-ai-core/agents/agent.py
+ai_core/agents/agent.py
 Interface chung cho tất cả AI Agent.
 
 Mọi thuật toán AI phải kế thừa class này và implement:

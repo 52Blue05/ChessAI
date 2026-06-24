@@ -1,5 +1,5 @@
 """
-ai-core/agents/greedy_agent.py
+ai_core/agents/greedy_agent.py
 Greedy Best-First Search — Thuật toán Tham lam.
 
 Vai trò: Baseline Model để đo lường.

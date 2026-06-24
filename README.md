@@ -41,7 +41,7 @@ ChessAI/
 │   ├── app.py                       # Flask app entry point
 │   └── requirements.txt
 │
-├── ai-core/                   # AI Agents (Plug-and-Play)
+├── ai_core/                   # AI Agents (Plug-and-Play)
 │   ├── agents/
 │   │   ├── __init__.py
 │   │   ├── agent.py                 # Interface chung (Abstract class)
@@ -92,8 +92,8 @@ class Agent(ABC):
 
 | Thành viên | Nhánh sở hữu | Không được sửa |
 |---|---|---|
-| **TV-A** | `feature/ui-board`, `feature/ui-controls`, `feature/ui-benchmark` | `backend/`, `ai-core/` |
-| **TV-B** | `feature/game-engine`, `feature/api-endpoints` | `frontend/`, `ai-core/agents/` |
+| **TV-A** | `feature/ui-board`, `feature/ui-controls`, `feature/ui-benchmark` | `backend/`, `ai_core/` |
+| **TV-B** | `feature/game-engine`, `feature/api-endpoints` | `frontend/`, `ai_core/agents/` |
 | **TV-C** | `feature/greedy-agent`, `feature/minimax-agent`, `feature/mcts-agent` | `frontend/`, `backend/engine/` |
 
 ## Hướng dẫn Setup
@@ -110,12 +110,20 @@ docker-compose up --build
 
 ### Chạy thủ công
 
-**Backend:**
-```bash
-cd backend
-pip install -r requirements.txt
-python app.py
+**Backend (PowerShell, từ repository root):**
+```powershell
+cd F:\AIchess\ChessAI
+python -m pip install -r .\backend\requirements.txt
+$env:PYTHONPATH = (Get-Location).Path
+python -m backend.app
 # Server chạy tại http://localhost:8080
+```
+
+**Backend (PowerShell, khi đang ở thư mục `backend`):**
+```powershell
+cd F:\AIchess\ChessAI\backend
+$env:PYTHONPATH = (Resolve-Path ..).Path
+python -m backend.app
 ```
 
 **Frontend:**
