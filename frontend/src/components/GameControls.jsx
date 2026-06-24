@@ -19,6 +19,7 @@ const ALGORITHMS = [
  * Props:
  *   algorithm: string
  *   depth: number
+ *   simulations: number
  *   isThinking: boolean
  *   stats: BenchmarkStats | null
  *   gameState: { currentPlayer, status }
@@ -31,11 +32,14 @@ const ALGORITHMS = [
 function GameControls({
   algorithm,
   depth,
+  simulations,
   isThinking,
+  error,
   stats,
   gameState,
   onAlgorithmChange,
   onDepthChange,
+  onSimulationsChange,
   onAiMove,
   onNewGame,
   onToggleBenchmark,
@@ -97,10 +101,11 @@ function GameControls({
           <input
             id="input-simulations"
             type="number"
-            min="100"
+            min="1"
             max="10000"
-            step="100"
-            defaultValue="1000"
+            step="25"
+            value={simulations}
+            onChange={(e) => onSimulationsChange?.(parseInt(e.target.value))}
           />
         </div>
       )}
@@ -110,7 +115,12 @@ function GameControls({
         className="btn btn-primary"
         id="btn-ai-move"
         onClick={onAiMove}
-        disabled={isThinking || status === 'checkmate' || status === 'stalemate'}
+        disabled={
+          isThinking
+          || status === 'checkmate'
+          || status === 'stalemate'
+          || status === 'draw'
+        }
       >
         {isThinking ? '🤔 AI đang suy nghĩ...' : '🤖 AI đi'}
       </button>
@@ -122,6 +132,12 @@ function GameControls({
       <button className="btn btn-secondary" id="btn-benchmark" onClick={onToggleBenchmark}>
         📊 Benchmark
       </button>
+
+      {error && (
+        <p style={{ color: 'var(--color-accent)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+          {error}
+        </p>
+      )}
 
       {/* Thinking animation */}
       {isThinking && (

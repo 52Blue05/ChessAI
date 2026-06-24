@@ -14,9 +14,6 @@ from backend.engine.board import Board, Square, Move
 from backend.engine.move_generator import MoveGenerator
 from backend.engine.benchmark_logger import BenchmarkLogger
 
-# Import AI agents
-import sys
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent.parent))
 from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
 
 game_bp = Blueprint("game", __name__, url_prefix="/api")
@@ -29,7 +26,7 @@ benchmark_logger = BenchmarkLogger()
 AGENTS = {
     "greedy": GreedyAgent(),
     "minimax": MinimaxAgent(),
-    "mcts": MCTSAgent(),
+    "mcts": MCTSAgent(simulations=100),
 }
 
 
@@ -49,40 +46,43 @@ def make_move():
         }
     }
     """
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     try:
         board = Board.from_fen(data["fen"])
-        move = Move(
+        requested_move = Move(
             from_sq=Square(data["move"]["from"]["row"], data["move"]["from"]["col"]),
             to_sq=Square(data["move"]["to"]["row"], data["move"]["to"]["col"]),
             promotion=data["move"].get("promotion"),
         )
 
         # Kiểm tra nước đi hợp lệ
-        legal_moves = move_generator.generate_legal_moves(board, move.from_sq)
-        is_legal = any(
-            m.from_sq.row == move.from_sq.row and m.from_sq.col == move.from_sq.col
-            and m.to_sq.row == move.to_sq.row and m.to_sq.col == move.to_sq.col
-            for m in legal_moves
+        legal_moves = move_generator.generate_legal_moves(board, requested_move.from_sq)
+        move = next(
+            (
+                candidate
+                for candidate in legal_moves
+                if candidate.from_sq == requested_move.from_sq
+                and candidate.to_sq == requested_move.to_sq
+                and candidate.promotion == requested_move.promotion
+            ),
+            None,
         )
 
-        if not is_legal:
+        if move is None:
             return jsonify({"error": "Nước đi không hợp lệ"}), 400
 
         # Thực hiện nước đi
         new_board = board.make_move(move)
-        status = move_generator.get_game_status(new_board)
+        game_state = _serialize_game_state(new_board)
 
         return jsonify({
             "move": _serialize_move(move),
-            "newFen": new_board.to_fen(),
-            "gameState": {
-                "fen": new_board.to_fen(),
-                "currentPlayer": new_board.current_player,
-                "status": status,
-            },
+            "newFen": game_state["fen"],
+            "gameState": game_state,
         })
 
+    except (KeyError, TypeError, ValueError, IndexError) as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -102,19 +102,22 @@ def get_legal_moves():
     if not fen:
         return jsonify({"error": "Missing 'fen' parameter"}), 400
 
-    board = Board.from_fen(fen)
+    try:
+        board = Board.from_fen(fen)
 
-    square = None
-    row = request.args.get("row", type=int)
-    col = request.args.get("col", type=int)
-    if row is not None and col is not None:
-        square = Square(row, col)
+        square = None
+        row = request.args.get("row", type=int)
+        col = request.args.get("col", type=int)
+        if row is not None and col is not None:
+            square = Square(row, col)
 
-    moves = move_generator.generate_legal_moves(board, square)
+        moves = move_generator.generate_legal_moves(board, square)
 
-    return jsonify({
-        "moves": [_serialize_move(m) for m in moves],
-    })
+        return jsonify({
+            "moves": [_serialize_move(m) for m in moves],
+        })
+    except (TypeError, ValueError, IndexError) as e:
+        return jsonify({"error": str(e)}), 400
 
 
 # ==============================================================
@@ -128,10 +131,10 @@ def get_ai_move():
         "fen": "...",
         "algorithm": "greedy" | "minimax" | "mcts",
         "depth": 3,           // optional, dùng cho minimax
-        "simulations": 1000   // optional, dùng cho mcts
+        "simulations": 100    // optional, dùng cho mcts
     }
     """
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     try:
         fen = data["fen"]
         algorithm = data.get("algorithm", "greedy")
@@ -142,10 +145,18 @@ def get_ai_move():
             return jsonify({"error": f"Unknown algorithm: {algorithm}"}), 400
 
         # Cấu hình agent (nếu có)
-        if hasattr(agent, "set_depth") and "depth" in data:
-            agent.set_depth(data["depth"])
-        if hasattr(agent, "set_simulations") and "simulations" in data:
-            agent.set_simulations(data["simulations"])
+        if hasattr(agent, "set_depth"):
+            depth = int(data.get("depth", 3))
+            if not 1 <= depth <= 6:
+                return jsonify({"error": "Depth must be between 1 and 6"}), 400
+            agent.set_depth(depth)
+        if hasattr(agent, "set_simulations"):
+            simulations = int(data.get("simulations", 100))
+            if not 1 <= simulations <= 10000:
+                return jsonify({
+                    "error": "Simulations must be between 1 and 10000",
+                }), 400
+            agent.set_simulations(simulations)
 
         # AI suy nghĩ
         benchmark_logger.start_timer()
@@ -153,7 +164,10 @@ def get_ai_move():
         thinking_time = benchmark_logger.stop_timer()
 
         if move is None:
-            return jsonify({"error": "AI không tìm được nước đi"}), 500
+            return jsonify({
+                "error": "AI không tìm được nước đi",
+                "gameState": _serialize_game_state(board),
+            }), 400
 
         # Lấy stats
         stats = agent.get_stats()
@@ -161,7 +175,8 @@ def get_ai_move():
 
         # Thực hiện nước đi
         new_board = board.make_move(move)
-        status = move_generator.get_game_status(new_board)
+        game_state = _serialize_game_state(new_board)
+        status = game_state["status"]
 
         # Log benchmark
         benchmark_logger.log_move(
@@ -176,12 +191,8 @@ def get_ai_move():
 
         return jsonify({
             "move": _serialize_move(move),
-            "newFen": new_board.to_fen(),
-            "gameState": {
-                "fen": new_board.to_fen(),
-                "currentPlayer": new_board.current_player,
-                "status": status,
-            },
+            "newFen": game_state["fen"],
+            "gameState": game_state,
             "stats": {
                 "algorithm": stats.algorithm,
                 "thinkingTimeMs": round(stats.thinking_time_ms, 2),
@@ -191,6 +202,8 @@ def get_ai_move():
             },
         })
 
+    except (KeyError, TypeError, ValueError, IndexError) as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -232,3 +245,36 @@ def _serialize_move(move: Move) -> dict:
             "color": move.captured.color,
         }
     return result
+
+
+def _serialize_game_state(board: Board) -> dict:
+    """Chuyển toàn bộ Board cần cho frontend demo sang JSON."""
+    return {
+        "fen": board.to_fen(),
+        "board": [
+            [
+                None if piece is None else {
+                    "type": piece.piece_type,
+                    "color": piece.color,
+                }
+                for piece in row
+            ]
+            for row in board.grid
+        ],
+        "currentPlayer": board.current_player,
+        "status": move_generator.get_game_status(board),
+        "castling": {
+            "whiteKingSide": board.castling.white_king_side,
+            "whiteQueenSide": board.castling.white_queen_side,
+            "blackKingSide": board.castling.black_king_side,
+            "blackQueenSide": board.castling.black_queen_side,
+        },
+        "enPassant": (
+            None if board.en_passant is None else {
+                "row": board.en_passant.row,
+                "col": board.en_passant.col,
+            }
+        ),
+        "halfMoveClock": board.half_move_clock,
+        "fullMoveNumber": board.full_move_number,
+    }

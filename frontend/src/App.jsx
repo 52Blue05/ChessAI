@@ -22,9 +22,12 @@ function App() {
     handleNewGame,
     handleAlgorithmChange,
     handleDepthChange,
+    handleSimulationsChange,
     algorithm,
     depth,
+    simulations,
     isThinking,
+    error,
   } = useGame();
 
   const [showBenchmark, setShowBenchmark] = useState(false);
@@ -50,11 +53,14 @@ function App() {
           <GameControls
             algorithm={algorithm}
             depth={depth}
+            simulations={simulations}
             isThinking={isThinking}
+            error={error}
             stats={stats}
             gameState={gameState}
             onAlgorithmChange={handleAlgorithmChange}
             onDepthChange={handleDepthChange}
+            onSimulationsChange={handleSimulationsChange}
             onAiMove={handleAiMove}
             onNewGame={handleNewGame}
             onToggleBenchmark={() => setShowBenchmark(!showBenchmark)}
