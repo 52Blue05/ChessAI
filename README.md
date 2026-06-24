@@ -1,133 +1,50 @@
-# ♟ Chess AI — So sánh thuật toán AI trong cờ vua
+# Chess AI Desktop
 
-## Mô tả dự án
+Dự án cờ vua với AI (Artificial Intelligence) hỗ trợ so sánh (benchmark) 3 thuật toán phổ biến trong game playing: Greedy, Minimax, và Monte Carlo Tree Search (MCTS).
 
-Dự án xây dựng ứng dụng chơi cờ vua có tích hợp 3 thuật toán AI:
+Phiên bản mới nhất đã được chuyển đổi từ Web (React/Flask) sang ứng dụng Desktop chạy bằng Python và Pygame, loại bỏ sự phụ thuộc vào Docker và Localhost, giúp việc cài đặt và chạy trực tiếp trên máy trở nên dễ dàng và mượt mà hơn.
 
-| Thuật toán | Mô tả | Vai trò |
-|---|---|---|
-| **Greedy Best-First Search** | Thuật toán tham lam, chọn nước đi tốt nhất ở depth=1 | Baseline Model |
-| **Minimax + Alpha-Beta Pruning** | Thuật toán cổ điển, tìm kiếm sâu có cắt tỉa | Thuật toán logic truyền thống |
-| **Monte Carlo Tree Search (MCTS)** | Thuật toán dựa trên mô phỏng ngẫu nhiên + UCB1 | Thuật toán xác suất hiện đại |
+## Tính năng
+- ♟️ **Người vs AI**: Chơi trực tiếp với AI. Chọn thuật toán AI mong muốn và đánh bại nó.
+- 🤖 **AI vs AI**: Chọn 2 thuật toán và xem chúng thi đấu tự động với nhau.
+- 📊 **Benchmark**: Chế độ giả lập tự động vòng tròn (Round Robin). Các AI tự động thi đấu với nhau (10 - 20 ván mỗi cặp) để thu thập dữ liệu thống kê (thời gian suy nghĩ, số node đã duyệt, tỉ lệ thắng) và hiển thị kết quả bằng bảng và biểu đồ.
 
-## Cấu trúc dự án
+## Thuật toán AI
+1. **Greedy**: Lựa chọn nước đi tốt nhất ngay lập tức (tham lam) dựa trên đánh giá hiện tại, không nhìn xa.
+2. **Minimax + Alpha-Beta Pruning**: Duyệt cây trò chơi với độ sâu xác định, tìm kiếm nước đi tối ưu và cắt tỉa (pruning) các nhánh không cần thiết để tăng tốc độ.
+3. **MCTS (Monte Carlo Tree Search)**: Dùng mô phỏng ngẫu nhiên (random rollouts) để đánh giá các nước đi, cực kỳ hiệu quả khi cây trò chơi quá lớn.
 
-```
-ChessAI/
-├── frontend/                  # React UI
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── ChessBoard.jsx       # UI bàn cờ 8×8
-│   │   │   ├── GameControls.jsx     # Chọn AI, depth
-│   │   │   └── BenchmarkChart.jsx   # Biểu đồ metrics
-│   │   ├── hooks/
-│   │   │   └── useGame.js           # Custom hook quản lý game state
-│   │   ├── api.js                   # HTTP client gọi backend
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── package.json
-│   └── vite.config.js
-│
-├── backend/                   # Python Flask API + Game Engine
-│   ├── engine/
-│   │   ├── __init__.py
-│   │   ├── board.py                 # State bàn cờ (FEN, piece placement)
-│   │   ├── move_generator.py        # Sinh nước đi hợp lệ
-│   │   └── benchmark_logger.py      # Ghi metrics ra CSV
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── game_controller.py       # REST API endpoints
-│   ├── app.py                       # Flask app entry point
-│   └── requirements.txt
-│
-├── ai-core/                   # AI Agents (Plug-and-Play)
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── agent.py                 # Interface chung (Abstract class)
-│   │   ├── greedy_agent.py          # Greedy Best-First Search
-│   │   ├── minimax_agent.py         # Minimax + Alpha-Beta Pruning
-│   │   └── mcts_agent.py           # Monte Carlo Tree Search
-│   └── __init__.py
-│
-├── shared/
-│   └── types.ts                     # GameState, Move, Piece, Player, AlgorithmType
-│
-├── tests/
-│   └── engine/
-│       ├── __init__.py
-│       └── test_board.py            # Unit test engine + AI
-│
-├── scripts/
-│   └── run_benchmark.py             # Round Robin tự động giữa 3 AI
-│
-├── benchmark_results.csv            # Dữ liệu thực nghiệm
-├── docker-compose.yml               # Chạy toàn bộ 1 lệnh
-└── README.md
-```
+## Cài đặt và Chạy
 
-## API Contract
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `POST` | `/api/move` | Thực hiện nước đi của người chơi |
-| `GET` | `/api/legal-moves` | Lấy danh sách nước đi hợp lệ |
-| `POST` | `/api/ai-move` | AI tính và trả về nước đi |
-| `GET` | `/api/benchmark` | Lấy kết quả benchmark |
-
-## Agent Interface
-
-```python
-class Agent(ABC):
-    def get_move(self, board: Board) -> Move:
-        """Trả về nước đi tốt nhất theo thuật toán"""
-        ...
-
-    def get_stats(self) -> BenchmarkStats:
-        """Trả về thống kê: thời gian, số node duyệt, ..."""
-        ...
-```
-
-## Phân chia nhánh Git
-
-| Thành viên | Nhánh sở hữu | Không được sửa |
-|---|---|---|
-| **TV-A** | `feature/ui-board`, `feature/ui-controls`, `feature/ui-benchmark` | `backend/`, `ai-core/` |
-| **TV-B** | `feature/game-engine`, `feature/api-endpoints` | `frontend/`, `ai-core/agents/` |
-| **TV-C** | `feature/greedy-agent`, `feature/minimax-agent`, `feature/mcts-agent` | `frontend/`, `backend/engine/` |
-
-## Hướng dẫn Setup
-
-### Prerequisites
+### Yêu cầu
 - Python 3.10+
-- Node.js 18+
-- Docker & Docker Compose (optional)
+- Pygame >= 2.5.0
 
-### Chạy bằng Docker (Khuyến nghị)
-```bash
-docker-compose up --build
-```
+### Hướng dẫn
+1. Clone repository về máy:
+   ```bash
+   git clone <repo_url>
+   cd ChessAI
+   ```
+2. (Khuyến nghị) Tạo môi trường ảo:
+   ```bash
+   python -m venv venv
+   # Kích hoạt trên Windows:
+   venv\Scripts\activate
+   # Kích hoạt trên MacOS/Linux:
+   source venv/bin/activate
+   ```
+3. Cài đặt các thư viện cần thiết:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Chạy game:
+   ```bash
+   python main.py
+   ```
 
-### Chạy thủ công
-
-**Backend:**
-```bash
-cd backend
-pip install -r requirements.txt
-python app.py
-# Server chạy tại http://localhost:8080
-```
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-# UI chạy tại http://localhost:3000
-```
-
-## Metrics đánh giá
-
-- ⏱ **Thời gian suy nghĩ trung bình** (ms/move)
-- 🔢 **Số lượng trạng thái đã duyệt** (nodes evaluated)
-- 🏆 **Tỷ lệ chiến thắng** (win rate) qua các ván đấu giả lập Round Robin
+## Cấu trúc thư mục mới
+- `ai_core/`: Chứa mã nguồn của 3 thuật toán AI (`greedy`, `minimax`, `mcts`) và interface cơ sở.
+- `backend/engine/`: Logic core của cờ vua (Board, MoveGenerator, BenchmarkLogger).
+- `gui/`: Chứa toàn bộ giao diện desktop viết bằng Pygame (constants, widgets, renderer, screens).
+- `main.py`: File entry point để khởi động ứng dụng.

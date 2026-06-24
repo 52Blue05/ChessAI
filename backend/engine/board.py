@@ -205,7 +205,7 @@ class Board:
         Thực hiện nước đi và trả về Board MỚI (immutable pattern).
         Board cũ không bị thay đổi.
 
-        TODO: Implement đầy đủ:
+        Xử lý đầy đủ:
         - Di chuyển quân
         - Bắt quân
         - Phong cấp
@@ -228,7 +228,67 @@ class Board:
         if move.promotion and piece:
             new_board.set_piece(move.to_sq, Piece(move.promotion, piece.color))
 
-        # TODO: Nhập thành, en passant, cập nhật castling rights
+        # --- Nhập thành (Castling) ---
+        if piece and piece.piece_type == "king":
+            col_diff = move.to_sq.col - move.from_sq.col
+            if abs(col_diff) == 2:
+                row = move.from_sq.row
+                if col_diff > 0:
+                    # King-side: xe từ h (col 7) sang f (col 5)
+                    rook = new_board.get_piece(Square(row, 7))
+                    new_board.set_piece(Square(row, 5), rook)
+                    new_board.set_piece(Square(row, 7), None)
+                else:
+                    # Queen-side: xe từ a (col 0) sang d (col 3)
+                    rook = new_board.get_piece(Square(row, 0))
+                    new_board.set_piece(Square(row, 3), rook)
+                    new_board.set_piece(Square(row, 0), None)
+
+        # --- Bắt tốt qua đường (En passant capture) ---
+        if (piece and piece.piece_type == "pawn" and
+            self.en_passant and
+            move.to_sq.row == self.en_passant.row and
+            move.to_sq.col == self.en_passant.col):
+            # Xóa quân tốt bị bắt (nằm cùng hàng với quân đi, cùng cột với ô en passant)
+            captured_pawn_row = move.from_sq.row
+            new_board.set_piece(Square(captured_pawn_row, move.to_sq.col), None)
+
+        # --- Cập nhật en passant square ---
+        new_board.en_passant = None
+        if piece and piece.piece_type == "pawn":
+            row_diff = move.to_sq.row - move.from_sq.row
+            if abs(row_diff) == 2:
+                # Tốt đi 2 ô → set en passant square (ô giữa)
+                ep_row = move.from_sq.row + row_diff // 2
+                new_board.en_passant = Square(ep_row, move.from_sq.col)
+
+        # --- Cập nhật castling rights ---
+        # Vua di chuyển → mất quyền nhập thành cả 2 bên
+        if piece and piece.piece_type == "king":
+            if piece.color == "white":
+                new_board.castling.white_king_side = False
+                new_board.castling.white_queen_side = False
+            else:
+                new_board.castling.black_king_side = False
+                new_board.castling.black_queen_side = False
+
+        # Xe di chuyển hoặc bị bắt → mất quyền nhập thành tương ứng
+        # Xe trắng a1
+        if (move.from_sq.row == 7 and move.from_sq.col == 0) or \
+           (move.to_sq.row == 7 and move.to_sq.col == 0):
+            new_board.castling.white_queen_side = False
+        # Xe trắng h1
+        if (move.from_sq.row == 7 and move.from_sq.col == 7) or \
+           (move.to_sq.row == 7 and move.to_sq.col == 7):
+            new_board.castling.white_king_side = False
+        # Xe đen a8
+        if (move.from_sq.row == 0 and move.from_sq.col == 0) or \
+           (move.to_sq.row == 0 and move.to_sq.col == 0):
+            new_board.castling.black_queen_side = False
+        # Xe đen h8
+        if (move.from_sq.row == 0 and move.from_sq.col == 7) or \
+           (move.to_sq.row == 0 and move.to_sq.col == 7):
+            new_board.castling.black_king_side = False
 
         # Đổi lượt
         new_board.current_player = "black" if self.current_player == "white" else "white"

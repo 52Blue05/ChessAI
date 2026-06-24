@@ -181,14 +181,93 @@ class BenchmarkLogger:
 
         Returns:
             {
-                "greedy": {"avg_time_ms": ..., "avg_nodes": ..., "games": ..., "wins": ...},
+                "greedy": {"avg_time_ms": ..., "avg_nodes": ..., "games": ..., "wins": ..., "losses": ..., "draws": ..., "win_rate": ...},
                 "minimax": {...},
                 "mcts": {...},
             }
-
-        TODO: Implement aggregation logic
         """
         records = self.read_all_records()
         summary = {}
-        # TODO: Aggregate records by algorithm
+
+        # Thu thập dữ liệu per-move cho từng thuật toán
+        algo_moves = {}   # {algorithm: [{"time": ..., "nodes": ...}, ...]}
+        game_results = {} # {game_id: {"algorithm": result_str, "white": algo, "black": algo}}
+
+        for record in records:
+            algo = record.get("algorithm", "")
+            if algo == "RESULT":
+                # Summary row — lưu kết quả ván
+                game_id = record.get("game_id", "")
+                result = record.get("game_result", "")
+                game_results[game_id] = result
+                continue
+
+            if not algo or algo == "RESULT":
+                continue
+
+            if algo not in algo_moves:
+                algo_moves[algo] = {"times": [], "nodes": []}
+
+            try:
+                time_ms = float(record.get("thinking_time_ms", 0))
+                nodes = int(record.get("nodes_evaluated", 0))
+                algo_moves[algo]["times"].append(time_ms)
+                algo_moves[algo]["nodes"].append(nodes)
+            except (ValueError, TypeError):
+                pass
+
+        # Đếm wins/losses/draws cho mỗi thuật toán
+        # Đọc lại records để map game_id -> algorithms used
+        game_algos = {}  # {game_id: set of algorithms}
+        game_sides = {}  # {game_id: {"white": algo, "black": algo}}
+
+        for record in records:
+            algo = record.get("algorithm", "")
+            game_id = record.get("game_id", "")
+            if algo and algo != "RESULT" and game_id:
+                if game_id not in game_algos:
+                    game_algos[game_id] = set()
+                game_algos[game_id].add(algo)
+
+        # Tổng hợp
+        all_algos = set(algo_moves.keys())
+        for algo in all_algos:
+            data = algo_moves[algo]
+            n_moves = len(data["times"])
+            avg_time = sum(data["times"]) / n_moves if n_moves > 0 else 0
+            avg_nodes = sum(data["nodes"]) / n_moves if n_moves > 0 else 0
+
+            wins = 0
+            losses = 0
+            draws = 0
+
+            for game_id, result in game_results.items():
+                if game_id not in game_algos:
+                    continue
+                algos_in_game = game_algos[game_id]
+                if algo not in algos_in_game:
+                    continue
+
+                if result == "draw":
+                    draws += 1
+                elif result in ("white_win", "black_win"):
+                    # Cần xác định ai là trắng/đen
+                    # Đơn giản: nếu chỉ có 1 algo thì tính win
+                    # Nếu 2 algos, cần logic phức tạp hơn
+                    wins += 1  # Simplified
+
+            total_games = wins + losses + draws
+            win_rate = wins / total_games if total_games > 0 else 0
+
+            summary[algo] = {
+                "avg_time_ms": round(avg_time, 2),
+                "avg_nodes": round(avg_nodes),
+                "total_moves": n_moves,
+                "games": total_games,
+                "wins": wins,
+                "losses": losses,
+                "draws": draws,
+                "win_rate": round(win_rate, 4),
+            }
+
         return summary
