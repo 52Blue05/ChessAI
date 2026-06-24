@@ -31,8 +31,9 @@ python -m pytest -q
 ## Benchmark
 
 Trong ứng dụng, chọn **Benchmark Round Robin** để chạy đủ ba cặp:
-Greedy–Minimax, Greedy–MCTS và Minimax–MCTS. Kết quả hiển thị bằng
-bảng xếp hạng cùng biểu đồ thời gian, số node và tỷ lệ thắng.
+Greedy–Minimax, Greedy–MCTS và Minimax–MCTS. Kết quả được trình bày
+theo dạng báo cáo gồm bảng tỷ lệ thắng, bảng hiệu năng từng cặp và
+phần tổng hợp thời gian, số node, độ sâu cùng cấu hình benchmark.
 
 Mỗi lần chạy tạo một CSV riêng trong `benchmark_results/`, gồm cấu hình
 Minimax depth, MCTS simulations, màu quân của mỗi thuật toán và kết quả ván.

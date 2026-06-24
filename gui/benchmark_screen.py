@@ -19,6 +19,20 @@ from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
 MINIMAX_DEPTH = 2
 MCTS_SIMULATIONS = 100
 
+REPORT_BG = (244, 247, 251)
+REPORT_HEADER = (40, 88, 132)
+REPORT_TABLE_HEADER = (53, 124, 184)
+REPORT_SECTION_BG = (221, 238, 216)
+REPORT_SECTION_BORDER = (167, 206, 151)
+REPORT_SECTION_TEXT = (38, 105, 54)
+REPORT_ROW_A = (255, 255, 255)
+REPORT_ROW_B = (229, 239, 249)
+REPORT_GRID = (154, 187, 218)
+REPORT_TEXT = (37, 48, 63)
+REPORT_MUTED = (84, 102, 122)
+REPORT_SUMMARY_BG = (255, 246, 210)
+REPORT_SUMMARY_HEADER = (211, 151, 0)
+
 
 class BenchmarkScreen:
     """Màn hình benchmark với progress bar + kết quả."""
@@ -65,17 +79,17 @@ class BenchmarkScreen:
 
         # Back button
         self.btn_back = Button(30, 20, 160, 38,
-                                "◀ Quay lại menu", color=COLOR_SURFACE_HOVER)
+                                "< Quay lại menu", color=COLOR_SURFACE_HOVER)
 
         self.btn_restart = Button(
-            840, 410, 280, 40,
-            "🔄 Chạy benchmark mới",
-            color=COLOR_SURFACE_HOVER,
+            815, 694, 165, 34,
+            "Chạy lại",
+            color=REPORT_HEADER,
         )
         self.btn_clear = Button(
-            840, 462, 280, 40,
-            "🗑 Xóa các file benchmark mới",
-            color=COLOR_ACCENT,
+            992, 694, 165, 34,
+            "Xóa CSV mới",
+            color=(178, 72, 72),
         )
 
         # Progress bar
@@ -178,10 +192,15 @@ class BenchmarkScreen:
         # Stats tracking
         algo_times = {name: [] for name in agents}
         algo_nodes = {name: [] for name in agents}
+        algo_depths = {name: [] for name in agents}
 
         for name_a, name_b in pairs:
             matchup = {"pair": f"{name_a} vs {name_b}",
                         "a_wins": 0, "b_wins": 0, "draws": 0}
+            matchup_stats = {
+                name_a: {"times": [], "nodes": [], "depths": []},
+                name_b: {"times": [], "nodes": [], "depths": []},
+            }
 
             for game_num in range(self.games_per_pair):
                 # Đổi bên
@@ -196,7 +215,8 @@ class BenchmarkScreen:
                 result = self._play_game(
                     agents[w_name], agents[b_name],
                     w_name, b_name,
-                    algo_times, algo_nodes,
+                    algo_times, algo_nodes, algo_depths,
+                    matchup_stats,
                 )
 
                 # Update results
@@ -222,6 +242,10 @@ class BenchmarkScreen:
                 games_played += 1
                 self.progress = games_played / total_games
 
+            matchup["performance"] = {
+                name: self._summarize_samples(samples)
+                for name, samples in matchup_stats.items()
+            }
             matchup_data.append(matchup)
 
         self.matchups = matchup_data
@@ -233,6 +257,11 @@ class BenchmarkScreen:
             self.algo_stats[name] = {
                 "avg_time_ms": sum(times) / len(times) if times else 0,
                 "avg_nodes": sum(nodes) / len(nodes) if nodes else 0,
+                "avg_depth": (
+                    sum(algo_depths[name]) / len(algo_depths[name])
+                    if algo_depths[name] else 0
+                ),
+                "total_moves": len(times),
             }
 
         self._update_charts()
@@ -241,7 +270,8 @@ class BenchmarkScreen:
 
     def _play_game(self, white_agent, black_agent,
                     w_name, b_name,
-                    algo_times, algo_nodes) -> str:
+                    algo_times, algo_nodes, algo_depths,
+                    matchup_stats) -> str:
         """Chơi 1 ván đấu, trả về 'white_win', 'black_win', 'draw'."""
         board = Board.from_fen()
         game_id = str(uuid.uuid4())[:8]
@@ -276,6 +306,10 @@ class BenchmarkScreen:
             stats.thinking_time_ms = elapsed
             algo_times[curr_name].append(elapsed)
             algo_nodes[curr_name].append(stats.nodes_evaluated)
+            algo_depths[curr_name].append(stats.depth_reached)
+            matchup_stats[curr_name]["times"].append(elapsed)
+            matchup_stats[curr_name]["nodes"].append(stats.nodes_evaluated)
+            matchup_stats[curr_name]["depths"].append(stats.depth_reached)
 
             fen_before = board.to_fen()
             board = board.make_move(move)
@@ -321,6 +355,22 @@ class BenchmarkScreen:
         )
         return "draw"
 
+    @staticmethod
+    def _summarize_samples(samples):
+        moves = len(samples["times"])
+        return {
+            "avg_time_ms": (
+                sum(samples["times"]) / moves if moves else 0
+            ),
+            "avg_nodes": (
+                sum(samples["nodes"]) / moves if moves else 0
+            ),
+            "avg_depth": (
+                sum(samples["depths"]) / moves if moves else 0
+            ),
+            "moves": moves,
+        }
+
     def _update_charts(self):
         """Cập nhật dữ liệu biểu đồ."""
         algo_names = ["greedy", "minimax", "mcts"]
@@ -364,6 +414,12 @@ class BenchmarkScreen:
         pass
 
     def draw(self, surface):
+        if self.is_done:
+            self.btn_back.rect.topleft = (72, 34)
+            self._draw_results(surface)
+            return
+
+        self.btn_back.rect.topleft = (30, 20)
         surface.fill(COLOR_BG)
 
         # Header
@@ -438,119 +494,318 @@ class BenchmarkScreen:
                     center=True,
                 )
 
-        elif self.is_done:
-            # Results
-            self._draw_results(surface)
-
     def _draw_results(self, surface):
-        """Vẽ kết quả benchmark."""
-        # Leaderboard table
-        draw_text(surface, "🏆 Bảng xếp hạng",
-                  (WINDOW_WIDTH // 2, 115),
-                  font=fonts.heading, color=COLOR_TEXT, center=True)
+        """Vẽ báo cáo benchmark theo bố cục bảng thống kê."""
+        surface.fill(REPORT_BG)
+        self._draw_report_header(surface)
+        self.btn_back.draw(surface)
 
-        # Sort by wins
-        sorted_algos = sorted(
-            self.results.items(),
-            key=lambda x: x[1]["wins"],
-            reverse=True,
+        self._draw_section_title(
+            surface,
+            100,
+            "1. Tỷ lệ thắng AI vs AI",
+        )
+        self._draw_table(
+            surface,
+            x=68,
+            y=132,
+            headers=[
+                "Cặp mô hình",
+                "Greedy thắng",
+                "Minimax thắng",
+                "MCTS thắng",
+                "Hòa",
+            ],
+            rows=self._build_win_rows(),
+            column_widths=[320, 185, 185, 185, 189],
+            row_height=23,
         )
 
-        # Table header
-        table_x = WINDOW_WIDTH // 2 - 280
-        header_y = 150
-        headers = ["#", "Thuật toán", "Thắng", "Thua", "Hòa", "Win Rate"]
-        col_widths = [30, 180, 60, 60, 60, 80]
+        self._draw_section_title(
+            surface,
+            245,
+            "2. Hiệu năng phản hồi trung bình trong ván",
+        )
+        self._draw_table(
+            surface,
+            x=68,
+            y=277,
+            headers=[
+                "Cặp mô hình",
+                "Mô hình",
+                "Thời gian TB",
+                "Nodes",
+                "Độ sâu TB",
+                "Số nước",
+            ],
+            rows=self._build_performance_rows(),
+            column_widths=[260, 180, 170, 150, 150, 154],
+            row_height=20,
+        )
 
-        x = table_x
-        for h, w in zip(headers, col_widths):
-            draw_text(surface, h, (x, header_y),
-                      font=fonts.label, color=COLOR_TEXT_MUTED)
-            x += w
-
-        pygame.draw.line(surface, COLOR_BORDER,
-                         (table_x, header_y + 22),
-                         (table_x + sum(col_widths), header_y + 22), 1)
-
-        # Table rows
-        medals = ["🥇", "🥈", "🥉"]
-        for i, (name, data) in enumerate(sorted_algos):
-            row_y = header_y + 30 + i * 28
-            x = table_x
-
-            total = data["wins"] + data["losses"] + data["draws"]
-            wr = data["wins"] / total * 100 if total > 0 else 0
-
-            values = [
-                medals[i] if i < 3 else str(i + 1),
-                ALGO_LABELS.get(name, name),
-                str(data["wins"]),
-                str(data["losses"]),
-                str(data["draws"]),
-                f"{wr:.1f}%",
-            ]
-            colors = [
-                COLOR_TEXT,
-                ALGO_COLORS.get(name, COLOR_TEXT),
-                COLOR_SUCCESS,
-                COLOR_ACCENT,
-                COLOR_TEXT_MUTED,
-                COLOR_WARNING,
-            ]
-
-            for val, col, w in zip(values, colors, col_widths):
-                draw_text(surface, val, (x, row_y),
-                          font=fonts.body, color=col)
-                x += w
-
-        # Matchup details
-        matchup_y = header_y + 30 + len(sorted_algos) * 28 + 20
-        draw_text(surface, "📋 Chi tiết cặp đấu",
-                  (table_x, matchup_y),
-                  font=fonts.label, color=COLOR_TEXT_MUTED)
-
-        for i, m in enumerate(self.matchups):
-            y = matchup_y + 22 + i * 22
-            text = f"{m['pair']}:   {m['a_wins']} - {m['b_wins']}   (hòa: {m['draws']})"
-            draw_text(surface, text, (table_x + 10, y),
-                      font=fonts.small, color=COLOR_TEXT)
-
-        # Charts
-        self.chart_time.draw(surface)
-        self.chart_nodes.draw(surface)
-        self.chart_winrate.draw(surface)
-
+        self._draw_algorithm_summary(surface)
+        self._draw_config_summary(surface)
         self.btn_restart.draw(surface)
         self.btn_clear.draw(surface)
 
+    def _draw_report_header(self, surface):
+        rect = pygame.Rect(60, 22, 1080, 66)
+        pygame.draw.rect(surface, REPORT_HEADER, rect, border_radius=7)
         draw_text(
             surface,
-            f"Minimax depth: {MINIMAX_DEPTH}",
-            (840, 530),
-            font=fonts.small,
-            color=COLOR_TEXT_MUTED,
+            "BÁO CÁO SO SÁNH HIỆU QUẢ 3 MÔ HÌNH AI CỜ VUA",
+            (WINDOW_WIDTH // 2, 45),
+            font=fonts.heading,
+            color=(255, 255, 255),
+            center=True,
         )
         draw_text(
             surface,
-            f"MCTS simulations: {MCTS_SIMULATIONS}",
-            (840, 552),
+            (
+                f"Benchmark mẫu: {self.games_per_pair} ván/cặp  |  "
+                f"Bàn cờ: 8×8  |  Minimax depth: {MINIMAX_DEPTH}  |  "
+                f"MCTS: {MCTS_SIMULATIONS} simulations"
+            ),
+            (WINDOW_WIDTH // 2, 70),
             font=fonts.small,
-            color=COLOR_TEXT_MUTED,
+            color=(218, 231, 244),
+            center=True,
         )
-        if self.logger:
+
+    @staticmethod
+    def _draw_section_title(surface, y, title):
+        rect = pygame.Rect(62, y, 1068, 24)
+        pygame.draw.rect(surface, REPORT_SECTION_BG, rect, border_radius=4)
+        pygame.draw.rect(
+            surface,
+            REPORT_SECTION_BORDER,
+            rect,
+            width=1,
+            border_radius=4,
+        )
+        draw_text(
+            surface,
+            title,
+            (78, y + 4),
+            font=fonts.label,
+            color=REPORT_SECTION_TEXT,
+        )
+
+    @staticmethod
+    def _draw_table(
+        surface,
+        x,
+        y,
+        headers,
+        rows,
+        column_widths,
+        row_height,
+    ):
+        header_height = 25
+        table_width = sum(column_widths)
+        table_height = header_height + row_height * len(rows)
+        pygame.draw.rect(
+            surface,
+            REPORT_GRID,
+            pygame.Rect(x, y, table_width, table_height),
+            width=1,
+        )
+
+        cursor_x = x
+        for header, width in zip(headers, column_widths):
+            rect = pygame.Rect(cursor_x, y, width, header_height)
+            pygame.draw.rect(surface, REPORT_TABLE_HEADER, rect)
+            pygame.draw.rect(surface, REPORT_GRID, rect, width=1)
             draw_text(
                 surface,
-                "CSV session:",
-                (840, 585),
-                font=fonts.small,
-                color=COLOR_TEXT_MUTED,
+                header,
+                (cursor_x + 7, y + 5),
+                font=fonts.label,
+                color=(255, 255, 255),
+            )
+            cursor_x += width
+
+        for row_index, row in enumerate(rows):
+            row_y = y + header_height + row_index * row_height
+            background = REPORT_ROW_A if row_index % 2 == 0 else REPORT_ROW_B
+            cursor_x = x
+            for value, width in zip(row, column_widths):
+                rect = pygame.Rect(cursor_x, row_y, width, row_height)
+                pygame.draw.rect(surface, background, rect)
+                pygame.draw.rect(surface, REPORT_GRID, rect, width=1)
+                draw_text(
+                    surface,
+                    value,
+                    (cursor_x + 6, row_y + 3),
+                    font=fonts.small,
+                    color=REPORT_TEXT,
+                )
+                cursor_x += width
+
+    def _build_win_rows(self):
+        rows = []
+        for matchup in self.matchups:
+            name_a, name_b = matchup["pair"].split(" vs ")
+            total = (
+                matchup["a_wins"]
+                + matchup["b_wins"]
+                + matchup["draws"]
+            )
+            win_counts = {
+                name_a: matchup["a_wins"],
+                name_b: matchup["b_wins"],
+            }
+            rows.append([
+                f"{self._algo_name(name_a)} vs {self._algo_name(name_b)}",
+                self._result_fraction(win_counts, "greedy", total),
+                self._result_fraction(win_counts, "minimax", total),
+                self._result_fraction(win_counts, "mcts", total),
+                f"{matchup['draws']}/{total}",
+            ])
+        return rows
+
+    def _build_performance_rows(self):
+        rows = []
+        for matchup in self.matchups:
+            name_a, name_b = matchup["pair"].split(" vs ")
+            pair_label = (
+                f"{self._algo_name(name_a)} vs {self._algo_name(name_b)}"
+            )
+            performance = matchup.get("performance", {})
+            for row_index, name in enumerate((name_a, name_b)):
+                data = performance.get(name, {})
+                rows.append([
+                    pair_label if row_index == 0 else "",
+                    self._algo_name(name),
+                    f"{data.get('avg_time_ms', 0):.2f} ms",
+                    f"{data.get('avg_nodes', 0):,.0f}",
+                    f"{data.get('avg_depth', 0):.1f}",
+                    str(data.get("moves", 0)),
+                ])
+        return rows
+
+    @staticmethod
+    def _result_fraction(win_counts, algorithm, total):
+        if algorithm not in win_counts:
+            return "-"
+        return f"{win_counts[algorithm]}/{total}"
+
+    @staticmethod
+    def _algo_name(name):
+        return {
+            "greedy": "Greedy",
+            "minimax": "Minimax",
+            "mcts": "MCTS",
+        }.get(name, name)
+
+    def _draw_algorithm_summary(self, surface):
+        box = pygame.Rect(60, 440, 520, 228)
+        pygame.draw.rect(surface, (255, 255, 255), box, border_radius=6)
+        pygame.draw.rect(
+            surface,
+            REPORT_GRID,
+            box,
+            width=2,
+            border_radius=6,
+        )
+        header = pygame.Rect(60, 440, 520, 28)
+        pygame.draw.rect(surface, REPORT_TABLE_HEADER, header, border_radius=5)
+        draw_text(
+            surface,
+            "3. Tổng hợp hiệu năng theo mô hình",
+            (74, 446),
+            font=fonts.label,
+            color=(255, 255, 255),
+        )
+
+        for index, name in enumerate(("greedy", "minimax", "mcts")):
+            data = self.algo_stats.get(name, {})
+            result = self.results.get(name, {})
+            total_games = sum(
+                result.get(key, 0)
+                for key in ("wins", "losses", "draws")
+            )
+            win_rate = (
+                result.get("wins", 0) / total_games * 100
+                if total_games else 0
+            )
+            y = 482 + index * 58
+            draw_text(
+                surface,
+                self._algo_name(name),
+                (76, y),
+                font=fonts.label,
+                color=REPORT_HEADER,
             )
             draw_text(
                 surface,
-                self.logger.csv_path.name,
-                (840, 607),
+                f"Thắng {win_rate:.1f}%",
+                (485, y),
                 font=fonts.small,
-                color=COLOR_PRIMARY_LIGHT,
+                color=REPORT_SECTION_TEXT,
+            )
+            draw_text(
+                surface,
+                (
+                    f"{data.get('avg_time_ms', 0):.2f} ms/nước  |  "
+                    f"{data.get('avg_nodes', 0):,.0f} nodes  |  "
+                    f"depth {data.get('avg_depth', 0):.1f}  |  "
+                    f"{data.get('total_moves', 0)} nước"
+                ),
+                (76, y + 23),
+                font=fonts.small,
+                color=REPORT_MUTED,
+            )
+
+    def _draw_config_summary(self, surface):
+        box = pygame.Rect(595, 440, 545, 228)
+        pygame.draw.rect(surface, REPORT_SUMMARY_BG, box, border_radius=6)
+        pygame.draw.rect(
+            surface,
+            REPORT_SUMMARY_HEADER,
+            box,
+            width=2,
+            border_radius=6,
+        )
+        header = pygame.Rect(595, 440, 545, 28)
+        pygame.draw.rect(
+            surface,
+            REPORT_SUMMARY_HEADER,
+            header,
+            border_radius=5,
+        )
+        draw_text(
+            surface,
+            "Cấu hình benchmark trên cùng thế cờ chuẩn",
+            (610, 446),
+            font=fonts.label,
+            color=(255, 255, 255),
+        )
+
+        total_games = len(self.matchups) * self.games_per_pair
+        lines = [
+            (
+                f"Số ván: {self.games_per_pair}/cặp · "
+                f"Tổng cộng: {total_games} ván"
+            ),
+            "Mỗi cặp luân phiên bên Trắng/Đen · Bàn cờ 8×8",
+            f"Greedy: evaluation chiến thuật 1 ply",
+            f"Minimax: depth {MINIMAX_DEPTH} + Alpha-Beta",
+            f"MCTS: {MCTS_SIMULATIONS} simulations + rollout chiến thuật",
+        ]
+        if self.logger:
+            filename = self.logger.csv_path.name
+            if len(filename) > 57:
+                filename = filename[:54] + "..."
+            lines.append(f"CSV: {filename}")
+
+        for index, line in enumerate(lines):
+            draw_text(
+                surface,
+                line,
+                (612, 484 + index * 28),
+                font=fonts.small,
+                color=REPORT_TEXT,
             )
 
     def get_result(self):
