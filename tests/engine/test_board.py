@@ -81,6 +81,51 @@ class TestBoard:
         assert new_board.grid[4][4].color == "white"
         assert new_board.grid[6][4] is None
 
+    def test_black_pawn_e7_to_e5(self):
+        """Tốt đen được đi hai ô từ vị trí ban đầu khi đến lượt đen."""
+        board = Board.from_fen()
+        board = board.make_move(Move(Square(6, 4), Square(4, 4)))  # e2-e4
+        board = board.make_move(Move(Square(1, 4), Square(3, 4)))  # e7-e5
+
+        assert board.grid[3][4] == Piece("pawn", "black")
+        assert board.grid[1][4] is None
+        assert board.current_player == "white"
+
+    def test_capture_updates_board(self):
+        """Bắt quân phải xóa quân bị bắt và đặt quân đi vào ô đích."""
+        board = Board.from_fen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1")
+        move = Move(Square(4, 4), Square(3, 3))  # e4xd5
+        new_board = board.make_move(move)
+
+        assert new_board.grid[3][3] == Piece("pawn", "white")
+        assert new_board.grid[4][4] is None
+        assert move.captured == Piece("pawn", "black")
+        assert board.grid[3][3] == Piece("pawn", "black")
+
+    def test_make_move_rejects_empty_square(self):
+        board = Board.from_fen()
+
+        with pytest.raises(ValueError, match="empty square"):
+            board.make_move(Move(Square(4, 4), Square(3, 4)))
+
+    def test_make_move_rejects_wrong_color(self):
+        board = Board.from_fen()
+
+        with pytest.raises(ValueError, match="wrong color"):
+            board.make_move(Move(Square(1, 4), Square(3, 4)))
+
+    def test_make_move_rejects_obviously_invalid_move(self):
+        board = Board.from_fen()
+
+        with pytest.raises(ValueError, match="Invalid pawn move"):
+            board.make_move(Move(Square(6, 4), Square(3, 4)))  # e2-e5
+
+        with pytest.raises(ValueError, match="same color"):
+            board.make_move(Move(Square(7, 0), Square(6, 0)))  # Ra1xa2
+
+        with pytest.raises(ValueError, match="path is blocked"):
+            board.make_move(Move(Square(7, 0), Square(4, 0)))  # Ra1-a4
+
     def test_find_king(self):
         """Tìm vua."""
         board = Board.from_fen()
@@ -122,13 +167,87 @@ class TestMoveGenerator:
         """
         Vị trí khởi đầu: trắng có 20 nước đi hợp lệ.
         (16 nước tốt + 4 nước mã)
-
-        TODO: Test này sẽ pass khi MoveGenerator được implement đầy đủ.
         """
         board = Board.from_fen()
         moves = self.gen.generate_legal_moves(board)
-        # Bỏ comment dòng dưới khi implement xong
-        # assert len(moves) == 20
+        assert len(moves) == 20
+
+    def test_white_pawn_e2_to_e4_is_generated(self):
+        board = Board.from_fen()
+        moves = self.gen.generate_legal_moves(board, Square(6, 4))
+
+        assert {move.to_sq.to_algebraic() for move in moves} == {"e3", "e4"}
+
+    def test_black_pawn_e7_to_e5_is_generated(self):
+        board = Board.from_fen(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        )
+        moves = self.gen.generate_legal_moves(board, Square(1, 4))
+
+        assert {move.to_sq.to_algebraic() for move in moves} == {"e5", "e6"}
+
+    def test_pawn_diagonal_capture(self):
+        board = Board.from_fen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(4, 4))
+
+        capture = next(move for move in moves if move.to_sq == Square(3, 3))
+        assert capture.captured == Piece("pawn", "black")
+
+    def test_pawn_promotion_generation(self):
+        board = Board.from_fen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")
+        moves = self.gen.generate_legal_moves(board, Square(1, 0))
+
+        assert {move.promotion for move in moves} == {
+            "queen",
+            "rook",
+            "bishop",
+            "knight",
+        }
+        assert all(move.to_sq == Square(0, 0) for move in moves)
+
+        promoted = board.make_move(
+            next(move for move in moves if move.promotion == "queen")
+        )
+        assert promoted.grid[0][0] == Piece("queen", "white")
+
+    def test_knight_moves_from_starting_position(self):
+        board = Board.from_fen()
+
+        b1_moves = self.gen.generate_legal_moves(board, Square(7, 1))
+        g1_moves = self.gen.generate_legal_moves(board, Square(7, 6))
+
+        assert {move.to_sq.to_algebraic() for move in b1_moves} == {"a3", "c3"}
+        assert {move.to_sq.to_algebraic() for move in g1_moves} == {"f3", "h3"}
+
+    @pytest.mark.parametrize(
+        ("square", "piece_type"),
+        [
+            (Square(7, 0), "rook"),
+            (Square(7, 2), "bishop"),
+            (Square(7, 3), "queen"),
+        ],
+    )
+    def test_sliding_pieces_blocked_at_start(self, square, piece_type):
+        board = Board.from_fen()
+
+        assert board.get_piece(square).piece_type == piece_type
+        assert self.gen.generate_legal_moves(board, square) == []
+
+    @pytest.mark.parametrize(
+        ("fen", "square", "expected_count"),
+        [
+            ("k7/8/8/8/3B4/8/8/7K w - - 0 1", Square(4, 3), 13),
+            ("k7/8/8/8/3R4/8/8/7K w - - 0 1", Square(4, 3), 14),
+            ("k7/8/8/8/3Q4/8/8/7K w - - 0 1", Square(4, 3), 27),
+            ("k7/8/8/8/3K4/8/8/8 w - - 0 1", Square(4, 3), 8),
+        ],
+    )
+    def test_open_board_piece_movement(self, fen, square, expected_count):
+        board = Board.from_fen(fen)
+
+        moves = self.gen.generate_legal_moves(board, square)
+
+        assert len(moves) == expected_count
 
     def test_no_moves_empty_board(self):
         """Bàn cờ chỉ có vua → ít nước đi."""

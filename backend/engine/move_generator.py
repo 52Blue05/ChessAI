@@ -38,6 +38,7 @@ class MoveGenerator:
         (0, -1),           (0, 1),
         (1, -1),  (1, 0),  (1, 1),
     ]
+    PROMOTION_PIECES = ("queen", "rook", "bishop", "knight")
 
     def generate_legal_moves(self, board: Board, square: Optional[Square] = None) -> List[Move]:
         """
@@ -105,21 +106,69 @@ class MoveGenerator:
     def _gen_pawn_moves(self, board: Board, sq: Square, color: str) -> List[Move]:
         """
         Sinh nước đi cho quân tốt.
-        TODO: Implement
+        Đã hỗ trợ:
         - Đi thẳng 1 ô
         - Đi thẳng 2 ô (từ vị trí ban đầu)
         - Bắt chéo
-        - Bắt tốt qua đường (en passant)
         - Phong cấp
+
+        TODO: Bắt tốt qua đường (en passant)
         """
         moves = []
         direction = -1 if color == "white" else 1
         start_row = 6 if color == "white" else 1
         promo_row = 0 if color == "white" else 7
 
-        # TODO: Implement pawn moves
+        one_step = Square(sq.row + direction, sq.col)
+        if one_step.is_valid() and board.get_piece(one_step) is None:
+            self._append_pawn_moves(moves, sq, one_step, promo_row)
+
+            two_step = Square(sq.row + 2 * direction, sq.col)
+            if (
+                sq.row == start_row
+                and two_step.is_valid()
+                and board.get_piece(two_step) is None
+            ):
+                moves.append(Move(sq, two_step))
+
+        for col_offset in (-1, 1):
+            target = Square(sq.row + direction, sq.col + col_offset)
+            if not target.is_valid():
+                continue
+
+            target_piece = board.get_piece(target)
+            if target_piece is not None and target_piece.color != color:
+                self._append_pawn_moves(
+                    moves,
+                    sq,
+                    target,
+                    promo_row,
+                    captured=target_piece,
+                )
 
         return moves
+
+    def _append_pawn_moves(
+        self,
+        moves: List[Move],
+        from_sq: Square,
+        to_sq: Square,
+        promotion_row: int,
+        captured: Optional[Piece] = None,
+    ) -> None:
+        """Thêm một nước tốt thường hoặc bốn lựa chọn phong cấp."""
+        if to_sq.row == promotion_row:
+            for promotion in self.PROMOTION_PIECES:
+                moves.append(
+                    Move(
+                        from_sq,
+                        to_sq,
+                        promotion=promotion,
+                        captured=captured,
+                    )
+                )
+        else:
+            moves.append(Move(from_sq, to_sq, captured=captured))
 
     def _gen_knight_moves(self, board: Board, sq: Square, color: str) -> List[Move]:
         """Sinh nước đi cho quân mã."""

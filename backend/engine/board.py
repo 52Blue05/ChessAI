@@ -20,6 +20,7 @@ FEN_PIECE_MAP = {
 }
 
 PIECE_TO_FEN = {v: k for k, v in FEN_PIECE_MAP.items()}
+PROMOTION_PIECES = {"queen", "rook", "bishop", "knight"}
 
 # FEN khởi đầu tiêu chuẩn
 STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -205,27 +206,25 @@ class Board:
         Thực hiện nước đi và trả về Board MỚI (immutable pattern).
         Board cũ không bị thay đổi.
 
+        Kiểm tra và thực hiện di chuyển cơ bản, bắt quân và phong cấp.
+
         TODO: Implement đầy đủ:
-        - Di chuyển quân
-        - Bắt quân
-        - Phong cấp
         - Nhập thành
         - Bắt tốt qua đường (en passant)
         - Cập nhật castling rights
-        - Đổi lượt
+        - Kiểm tra vua bị chiếu
         """
+        piece, captured = self._validate_move(move)
         new_board = deepcopy(self)
 
-        piece = new_board.get_piece(move.from_sq)
-        captured = new_board.get_piece(move.to_sq)
         move.captured = captured
 
         # Di chuyển quân
-        new_board.set_piece(move.to_sq, piece)
+        new_board.set_piece(move.to_sq, deepcopy(piece))
         new_board.set_piece(move.from_sq, None)
 
         # Phong cấp
-        if move.promotion and piece:
+        if move.promotion:
             new_board.set_piece(move.to_sq, Piece(move.promotion, piece.color))
 
         # TODO: Nhập thành, en passant, cập nhật castling rights
@@ -234,7 +233,7 @@ class Board:
         new_board.current_player = "black" if self.current_player == "white" else "white"
 
         # Cập nhật counters
-        if piece and piece.piece_type == "pawn" or captured:
+        if piece.piece_type == "pawn" or captured:
             new_board.half_move_clock = 0
         else:
             new_board.half_move_clock = self.half_move_clock + 1
@@ -243,6 +242,112 @@ class Board:
             new_board.full_move_number = self.full_move_number + 1
 
         return new_board
+
+    def _validate_move(self, move: Move) -> tuple[Piece, Optional[Piece]]:
+        """Kiểm tra một nước đi pseudo-legal trước khi cập nhật bàn cờ."""
+        if not move.from_sq.is_valid() or not move.to_sq.is_valid():
+            raise ValueError("Move squares must be on the board")
+        if move.from_sq == move.to_sq:
+            raise ValueError("Source and destination squares must differ")
+
+        piece = self.get_piece(move.from_sq)
+        if piece is None:
+            raise ValueError("Cannot move from an empty square")
+        if piece.color != self.current_player:
+            raise ValueError("Cannot move a piece of the wrong color")
+
+        captured = self.get_piece(move.to_sq)
+        if captured and captured.color == piece.color:
+            raise ValueError("Cannot capture a piece of the same color")
+
+        row_delta = move.to_sq.row - move.from_sq.row
+        col_delta = move.to_sq.col - move.from_sq.col
+        abs_row = abs(row_delta)
+        abs_col = abs(col_delta)
+
+        if piece.piece_type == "pawn":
+            self._validate_pawn_move(move, piece, captured)
+        elif piece.piece_type == "knight":
+            if (abs_row, abs_col) not in {(1, 2), (2, 1)}:
+                raise ValueError("Invalid knight move")
+        elif piece.piece_type == "bishop":
+            if abs_row == 0 or abs_row != abs_col:
+                raise ValueError("Invalid bishop move")
+            self._validate_clear_path(move)
+        elif piece.piece_type == "rook":
+            if not ((row_delta == 0) ^ (col_delta == 0)):
+                raise ValueError("Invalid rook move")
+            self._validate_clear_path(move)
+        elif piece.piece_type == "queen":
+            is_straight = (row_delta == 0) ^ (col_delta == 0)
+            is_diagonal = abs_row > 0 and abs_row == abs_col
+            if not (is_straight or is_diagonal):
+                raise ValueError("Invalid queen move")
+            self._validate_clear_path(move)
+        elif piece.piece_type == "king":
+            if max(abs_row, abs_col) != 1:
+                raise ValueError("Invalid king move")
+        else:
+            raise ValueError(f"Unknown piece type: {piece.piece_type}")
+
+        if piece.piece_type != "pawn" and move.promotion is not None:
+            raise ValueError("Only pawns can be promoted")
+
+        return piece, captured
+
+    def _validate_pawn_move(
+        self,
+        move: Move,
+        piece: Piece,
+        captured: Optional[Piece],
+    ) -> None:
+        """Kiểm tra nước tiến, bắt chéo và phong cấp của tốt."""
+        direction = -1 if piece.color == "white" else 1
+        start_row = 6 if piece.color == "white" else 1
+        promotion_row = 0 if piece.color == "white" else 7
+        row_delta = move.to_sq.row - move.from_sq.row
+        col_delta = move.to_sq.col - move.from_sq.col
+
+        if col_delta == 0:
+            if captured is not None:
+                raise ValueError("Pawn cannot capture straight ahead")
+            if row_delta == direction:
+                pass
+            elif row_delta == 2 * direction and move.from_sq.row == start_row:
+                middle = Square(move.from_sq.row + direction, move.from_sq.col)
+                if self.get_piece(middle) is not None:
+                    raise ValueError("Pawn cannot jump over a piece")
+            else:
+                raise ValueError("Invalid pawn move")
+        elif abs(col_delta) == 1 and row_delta == direction:
+            if captured is None:
+                raise ValueError("Pawn diagonal move requires a capture")
+        else:
+            raise ValueError("Invalid pawn move")
+
+        reaches_promotion = move.to_sq.row == promotion_row
+        if reaches_promotion:
+            if move.promotion not in PROMOTION_PIECES:
+                raise ValueError("Pawn reaching the last rank must promote")
+        elif move.promotion is not None:
+            raise ValueError("Pawn can only promote on the last rank")
+
+    def _validate_clear_path(self, move: Move) -> None:
+        """Từ chối nước đi của quân trượt nếu có quân cản đường."""
+        row_step = (move.to_sq.row > move.from_sq.row) - (
+            move.to_sq.row < move.from_sq.row
+        )
+        col_step = (move.to_sq.col > move.from_sq.col) - (
+            move.to_sq.col < move.from_sq.col
+        )
+
+        row = move.from_sq.row + row_step
+        col = move.from_sq.col + col_step
+        while (row, col) != (move.to_sq.row, move.to_sq.col):
+            if self.get_piece(Square(row, col)) is not None:
+                raise ValueError("Sliding piece path is blocked")
+            row += row_step
+            col += col_step
 
     def copy(self) -> "Board":
         """Tạo bản sao deep copy."""
