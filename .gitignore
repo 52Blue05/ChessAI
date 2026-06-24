@@ -28,6 +28,7 @@ Thumbs.db
 
 # Benchmark data generated at runtime
 benchmark_results.csv
+benchmark_results/
 
 # Build
 dist/

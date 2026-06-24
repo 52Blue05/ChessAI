@@ -16,17 +16,22 @@ from backend.engine.benchmark_logger import BenchmarkLogger
 from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
 
 
+MINIMAX_DEPTH = 2
+MCTS_SIMULATIONS = 100
+
+
 class BenchmarkScreen:
     """Màn hình benchmark với progress bar + kết quả."""
 
     def __init__(self):
         self.result = None  # "back_to_menu"
         self.move_gen = MoveGenerator()
-        self.logger = BenchmarkLogger()
+        self.logger = None
 
         # Config
         self.games_per_pair = 10
         self.max_moves = 150
+        self.run_config = {}
 
         # State
         self.is_running = False
@@ -34,6 +39,7 @@ class BenchmarkScreen:
         self.progress = 0.0
         self.progress_text = ""
         self.current_game_info = ""
+        self.notice = ""
 
         # Results
         self.results = {}  # {name: {wins, losses, draws}}
@@ -61,6 +67,17 @@ class BenchmarkScreen:
         self.btn_back = Button(30, 20, 160, 38,
                                 "◀ Quay lại menu", color=COLOR_SURFACE_HOVER)
 
+        self.btn_restart = Button(
+            840, 410, 280, 40,
+            "🔄 Chạy benchmark mới",
+            color=COLOR_SURFACE_HOVER,
+        )
+        self.btn_clear = Button(
+            840, 462, 280, 40,
+            "🗑 Xóa các file benchmark mới",
+            color=COLOR_ACCENT,
+        )
+
         # Progress bar
         self.progress_bar = ProgressBar(cx - 300, 310, 600, 28, color=COLOR_PRIMARY)
 
@@ -78,6 +95,15 @@ class BenchmarkScreen:
             return
 
         if not self.is_running:
+            if self.is_done and self.btn_restart.handle_event(event):
+                self._start_benchmark()
+                return
+            if self.is_done and self.btn_clear.handle_event(event):
+                deleted = BenchmarkLogger.clear_session_files()
+                self._reset_results_view()
+                self.notice = f"Đã xóa {deleted} file benchmark session."
+                return
+
             if self.btn_10.handle_event(event):
                 self.games_per_pair = 10
                 self.btn_10.color = COLOR_PRIMARY
@@ -92,22 +118,48 @@ class BenchmarkScreen:
 
     def _start_benchmark(self):
         """Bắt đầu benchmark trong thread riêng."""
+        self.run_config = {
+            "games_per_pair": self.games_per_pair,
+            "max_moves": self.max_moves,
+            "minimax_depth": MINIMAX_DEPTH,
+            "mcts_simulations": MCTS_SIMULATIONS,
+            "algorithms": ["greedy", "minimax", "mcts"],
+        }
+        self.logger = BenchmarkLogger.create_session(
+            self.run_config,
+            prefix="pygame_benchmark",
+        )
         self.is_running = True
         self.is_done = False
         self.progress = 0.0
         self.results = {}
         self.matchups = []
         self.algo_stats = {}
+        self.notice = ""
 
         thread = threading.Thread(target=self._run_benchmark, daemon=True)
         thread.start()
+
+    def _reset_results_view(self):
+        self.is_running = False
+        self.is_done = False
+        self.progress = 0.0
+        self.progress_text = ""
+        self.current_game_info = ""
+        self.results = {}
+        self.matchups = []
+        self.algo_stats = {}
+        self.chart_time.set_data([])
+        self.chart_nodes.set_data([])
+        self.chart_winrate.set_data([])
+        self.logger = None
 
     def _run_benchmark(self):
         """Chạy Round Robin benchmark."""
         agents = {
             "greedy": GreedyAgent(),
-            "minimax": MinimaxAgent(depth=2),
-            "mcts": MCTSAgent(simulations=100),
+            "minimax": MinimaxAgent(depth=MINIMAX_DEPTH),
+            "mcts": MCTSAgent(simulations=MCTS_SIMULATIONS),
         }
 
         pairs = [
@@ -205,21 +257,68 @@ class BenchmarkScreen:
             if move is None:
                 status = self.move_gen.get_game_status(board)
                 if status == "checkmate":
-                    return "black_win" if board.current_player == "white" else "white_win"
-                return "draw"
+                    result = (
+                        "black_win"
+                        if board.current_player == "white"
+                        else "white_win"
+                    )
+                else:
+                    result = "draw"
+                self.logger.log_game_result(
+                    game_id,
+                    result,
+                    white_algorithm=w_name,
+                    black_algorithm=b_name,
+                )
+                return result
 
             stats = current.get_stats()
+            stats.thinking_time_ms = elapsed
             algo_times[curr_name].append(elapsed)
             algo_nodes[curr_name].append(stats.nodes_evaluated)
 
+            fen_before = board.to_fen()
             board = board.make_move(move)
+            fen_after = board.to_fen()
             status = self.move_gen.get_game_status(board)
 
+            game_result = "ongoing"
             if status == "checkmate":
-                return "black_win" if board.current_player == "white" else "white_win"
-            if status in ("stalemate", "draw"):
-                return "draw"
+                game_result = (
+                    "black_win"
+                    if board.current_player == "white"
+                    else "white_win"
+                )
+            elif status in ("stalemate", "draw"):
+                game_result = "draw"
 
+            self.logger.log_move(
+                game_id=game_id,
+                move_number=move_num,
+                stats=stats,
+                move_uci=move.to_uci(),
+                fen_before=fen_before,
+                fen_after=fen_after,
+                game_result=game_result,
+                white_algorithm=w_name,
+                black_algorithm=b_name,
+            )
+
+            if game_result != "ongoing":
+                self.logger.log_game_result(
+                    game_id,
+                    game_result,
+                    white_algorithm=w_name,
+                    black_algorithm=b_name,
+                )
+                return game_result
+
+        self.logger.log_game_result(
+            game_id,
+            "draw",
+            white_algorithm=w_name,
+            black_algorithm=b_name,
+        )
         return "draw"
 
     def _update_charts(self):
@@ -293,6 +392,26 @@ class BenchmarkScreen:
                       f"Tổng số ván: {total} (3 cặp × {self.games_per_pair} ván)",
                       (WINDOW_WIDTH // 2, 300),
                       font=fonts.small, color=COLOR_TEXT_MUTED, center=True)
+            draw_text(
+                surface,
+                (
+                    f"Minimax depth {MINIMAX_DEPTH} · "
+                    f"MCTS {MCTS_SIMULATIONS} simulations"
+                ),
+                (WINDOW_WIDTH // 2, 325),
+                font=fonts.small,
+                color=COLOR_TEXT_MUTED,
+                center=True,
+            )
+            if self.notice:
+                draw_text(
+                    surface,
+                    self.notice,
+                    (WINDOW_WIDTH // 2, 355),
+                    font=fonts.small,
+                    color=COLOR_SUCCESS,
+                    center=True,
+                )
 
         elif self.is_running:
             # Running — show progress
@@ -309,6 +428,15 @@ class BenchmarkScreen:
             draw_text(surface, f"Đang chạy benchmark{dots}",
                       (WINDOW_WIDTH // 2, 380),
                       font=fonts.small, color=COLOR_PRIMARY, center=True)
+            if self.logger:
+                draw_text(
+                    surface,
+                    self.logger.csv_path.name,
+                    (WINDOW_WIDTH // 2, 405),
+                    font=fonts.small,
+                    color=COLOR_TEXT_MUTED,
+                    center=True,
+                )
 
         elif self.is_done:
             # Results
@@ -392,11 +520,38 @@ class BenchmarkScreen:
         self.chart_nodes.draw(surface)
         self.chart_winrate.draw(surface)
 
-        # Restart button
-        restart_btn = Button(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT - 60,
-                              200, 38, "🔄 Chạy lại",
-                              color=COLOR_SURFACE_HOVER)
-        restart_btn.draw(surface)
+        self.btn_restart.draw(surface)
+        self.btn_clear.draw(surface)
+
+        draw_text(
+            surface,
+            f"Minimax depth: {MINIMAX_DEPTH}",
+            (840, 530),
+            font=fonts.small,
+            color=COLOR_TEXT_MUTED,
+        )
+        draw_text(
+            surface,
+            f"MCTS simulations: {MCTS_SIMULATIONS}",
+            (840, 552),
+            font=fonts.small,
+            color=COLOR_TEXT_MUTED,
+        )
+        if self.logger:
+            draw_text(
+                surface,
+                "CSV session:",
+                (840, 585),
+                font=fonts.small,
+                color=COLOR_TEXT_MUTED,
+            )
+            draw_text(
+                surface,
+                self.logger.csv_path.name,
+                (840, 607),
+                font=fonts.small,
+                color=COLOR_PRIMARY_LIGHT,
+            )
 
     def get_result(self):
         result = self.result

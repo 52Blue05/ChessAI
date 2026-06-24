@@ -28,6 +28,22 @@ Chạy kiểm thử:
 python -m pytest -q
 ```
 
+## Benchmark
+
+Trong ứng dụng, chọn **Benchmark Round Robin** để chạy đủ ba cặp:
+Greedy–Minimax, Greedy–MCTS và Minimax–MCTS. Kết quả hiển thị bằng
+bảng xếp hạng cùng biểu đồ thời gian, số node và tỷ lệ thắng.
+
+Mỗi lần chạy tạo một CSV riêng trong `benchmark_results/`, gồm cấu hình
+Minimax depth, MCTS simulations, màu quân của mỗi thuật toán và kết quả ván.
+File `benchmark_results.csv` cũ không bị ghi đè.
+
+Chạy benchmark từ PowerShell:
+
+```bash
+python scripts/run_benchmark.py --games 10 --max-moves 150 --depth 2 --simulations 100
+```
+
 ## Cài đặt và Chạy
 
 ### Yêu cầu

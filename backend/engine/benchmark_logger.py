@@ -1,27 +1,20 @@
-"""
-backend/engine/benchmark_logger.py
-Ghi metrics hiệu năng AI ra file CSV.
-
-Metrics:
-- Thuật toán sử dụng
-- Thời gian suy nghĩ (ms)
-- Số node đã duyệt
-- Độ sâu tìm kiếm
-- Điểm đánh giá
-- Kết quả ván đấu
-"""
+"""Benchmark metrics and isolated CSV session logging."""
 
 from __future__ import annotations
+
 import csv
-import os
+import json
 import time
-from dataclasses import dataclass, field
-from typing import List, Optional
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 
-# Đường dẫn file CSV mặc định
-DEFAULT_CSV_PATH = Path(__file__).parent.parent.parent / "benchmark_results.csv"
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+DEFAULT_CSV_PATH = PROJECT_ROOT / "benchmark_results.csv"
+BENCHMARK_RESULTS_DIR = PROJECT_ROOT / "benchmark_results"
 
 CSV_HEADERS = [
     "timestamp",
@@ -35,13 +28,18 @@ CSV_HEADERS = [
     "move_uci",
     "fen_before",
     "fen_after",
-    "game_result",  # white_win, black_win, draw, ongoing
+    "game_result",
+    "record_type",
+    "white_algorithm",
+    "black_algorithm",
+    "run_config",
 ]
 
 
 @dataclass
 class BenchmarkStats:
-    """Thống kê hiệu năng của mỗi lần AI suy nghĩ."""
+    """Performance statistics for one AI decision."""
+
     algorithm: str
     thinking_time_ms: float = 0.0
     nodes_evaluated: int = 0
@@ -51,11 +49,12 @@ class BenchmarkStats:
 
 @dataclass
 class GameRecord:
-    """Kết quả một ván đấu."""
+    """Summary of one AI-vs-AI game."""
+
     game_id: str
     white_algorithm: str
     black_algorithm: str
-    result: str  # white_win, black_win, draw
+    result: str
     total_moves: int = 0
     white_avg_time_ms: float = 0.0
     black_avg_time_ms: float = 0.0
@@ -64,56 +63,73 @@ class GameRecord:
 
 
 class BenchmarkLogger:
-    """
-    Logger ghi benchmark metrics ra CSV.
+    """Write benchmark moves, configuration, and results to CSV."""
 
-    Usage:
-        logger = BenchmarkLogger()
-
-        # Ghi từng nước đi
-        logger.log_move(game_id, move_number, stats, move_uci, fen_before, fen_after)
-
-        # Timer tiện ích
-        logger.start_timer()
-        # ... AI suy nghĩ ...
-        elapsed_ms = logger.stop_timer()
-
-        # Đọc kết quả
-        records = logger.get_game_records()
-    """
-
-    def __init__(self, csv_path: Optional[str] = None):
+    def __init__(
+        self,
+        csv_path: Optional[str] = None,
+        run_config: Optional[dict] = None,
+    ):
         self.csv_path = Path(csv_path) if csv_path else DEFAULT_CSV_PATH
         self._timer_start: Optional[float] = None
         self._ensure_csv_exists()
+        if run_config:
+            self.log_run_config(run_config)
 
-    def _ensure_csv_exists(self):
-        """Tạo file CSV với headers nếu chưa tồn tại."""
-        if not self.csv_path.exists():
-            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.csv_path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(CSV_HEADERS)
+    @classmethod
+    def create_session(
+        cls,
+        run_config: dict,
+        output_dir: Optional[str] = None,
+        prefix: str = "benchmark",
+    ) -> "BenchmarkLogger":
+        """Create a uniquely named CSV for one benchmark run."""
+        results_dir = Path(output_dir) if output_dir else BENCHMARK_RESULTS_DIR
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        session_id = uuid.uuid4().hex[:8]
+        csv_path = results_dir / f"{prefix}_{timestamp}_{session_id}.csv"
+        return cls(str(csv_path), run_config=run_config)
 
-    # ------------------------------------------------------------------
-    # Timer
-    # ------------------------------------------------------------------
+    @staticmethod
+    def clear_session_files(output_dir: Optional[str] = None) -> int:
+        """Delete generated session CSVs without touching the legacy CSV."""
+        results_dir = Path(output_dir) if output_dir else BENCHMARK_RESULTS_DIR
+        if not results_dir.exists():
+            return 0
+
+        deleted = 0
+        for csv_path in results_dir.glob("*.csv"):
+            if csv_path.is_file():
+                csv_path.unlink()
+                deleted += 1
+        return deleted
+
+    def _ensure_csv_exists(self) -> None:
+        if self.csv_path.exists():
+            return
+        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.csv_path, "w", newline="", encoding="utf-8") as file:
+            csv.writer(file).writerow(CSV_HEADERS)
 
     def start_timer(self) -> None:
-        """Bắt đầu đếm thời gian."""
         self._timer_start = time.perf_counter()
 
     def stop_timer(self) -> float:
-        """Dừng đếm thời gian, trả về milliseconds."""
         if self._timer_start is None:
             return 0.0
         elapsed = (time.perf_counter() - self._timer_start) * 1000
         self._timer_start = None
         return elapsed
 
-    # ------------------------------------------------------------------
-    # Ghi log
-    # ------------------------------------------------------------------
+    def log_run_config(self, run_config: dict) -> None:
+        self._append_row(
+            record_type="CONFIG",
+            run_config=json.dumps(
+                run_config,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
 
     def log_move(
         self,
@@ -124,150 +140,136 @@ class BenchmarkLogger:
         fen_before: str,
         fen_after: str,
         game_result: str = "ongoing",
+        white_algorithm: str = "",
+        black_algorithm: str = "",
     ) -> None:
-        """Ghi log một nước đi vào CSV."""
-        with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                time.strftime("%Y-%m-%d %H:%M:%S"),
-                game_id,
-                move_number,
-                stats.algorithm,
-                stats.depth_reached,
-                round(stats.thinking_time_ms, 2),
-                stats.nodes_evaluated,
-                round(stats.evaluation_score, 4),
-                move_uci,
-                fen_before,
-                fen_after,
-                game_result,
-            ])
+        self._append_row(
+            record_type="MOVE",
+            game_id=game_id,
+            move_number=move_number,
+            algorithm=stats.algorithm,
+            depth=stats.depth_reached,
+            thinking_time_ms=round(stats.thinking_time_ms, 2),
+            nodes_evaluated=stats.nodes_evaluated,
+            evaluation_score=round(stats.evaluation_score, 4),
+            move_uci=move_uci,
+            fen_before=fen_before,
+            fen_after=fen_after,
+            game_result=game_result,
+            white_algorithm=white_algorithm,
+            black_algorithm=black_algorithm,
+        )
 
-    def log_game_result(self, game_id: str, result: str) -> None:
-        """Cập nhật kết quả ván đấu (ghi thêm 1 dòng summary)."""
-        with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                time.strftime("%Y-%m-%d %H:%M:%S"),
-                game_id,
-                -1,  # move_number = -1 => summary row
-                "RESULT",
-                0, 0, 0, 0,
-                "",
-                "",
-                "",
-                result,
-            ])
+    def log_game_result(
+        self,
+        game_id: str,
+        result: str,
+        white_algorithm: str = "",
+        black_algorithm: str = "",
+    ) -> None:
+        self._append_row(
+            record_type="RESULT",
+            game_id=game_id,
+            move_number=-1,
+            algorithm="RESULT",
+            game_result=result,
+            white_algorithm=white_algorithm,
+            black_algorithm=black_algorithm,
+        )
 
-    # ------------------------------------------------------------------
-    # Đọc kết quả
-    # ------------------------------------------------------------------
+    def _append_row(self, **values) -> None:
+        with open(self.csv_path, "a", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=CSV_HEADERS)
+            row = {header: "" for header in CSV_HEADERS}
+            row["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            row.update(values)
+            writer.writerow(row)
 
     def read_all_records(self) -> List[dict]:
-        """Đọc tất cả records từ CSV."""
-        records = []
         if not self.csv_path.exists():
-            return records
-
-        with open(self.csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                records.append(row)
-        return records
+            return []
+        with open(self.csv_path, "r", encoding="utf-8") as file:
+            return list(csv.DictReader(file))
 
     def get_summary_by_algorithm(self) -> dict:
-        """
-        Tổng hợp thống kê theo từng thuật toán.
+        """Aggregate exact per-algorithm metrics and game outcomes."""
+        move_data = {}
+        game_results = {}
 
-        Returns:
-            {
-                "greedy": {"avg_time_ms": ..., "avg_nodes": ..., "games": ..., "wins": ..., "losses": ..., "draws": ..., "win_rate": ...},
-                "minimax": {...},
-                "mcts": {...},
-            }
-        """
-        records = self.read_all_records()
-        summary = {}
+        for record in self.read_all_records():
+            record_type = record.get("record_type", "")
+            algorithm = record.get("algorithm", "")
 
-        # Thu thập dữ liệu per-move cho từng thuật toán
-        algo_moves = {}   # {algorithm: [{"time": ..., "nodes": ...}, ...]}
-        game_results = {} # {game_id: {"algorithm": result_str, "white": algo, "black": algo}}
-
-        for record in records:
-            algo = record.get("algorithm", "")
-            if algo == "RESULT":
-                # Summary row — lưu kết quả ván
-                game_id = record.get("game_id", "")
-                result = record.get("game_result", "")
-                game_results[game_id] = result
+            if record_type == "RESULT" or algorithm == "RESULT":
+                game_results[record.get("game_id", "")] = {
+                    "result": record.get("game_result", ""),
+                    "white": record.get("white_algorithm", ""),
+                    "black": record.get("black_algorithm", ""),
+                }
                 continue
 
-            if not algo or algo == "RESULT":
+            if record_type not in ("", "MOVE") or not algorithm:
                 continue
 
-            if algo not in algo_moves:
-                algo_moves[algo] = {"times": [], "nodes": []}
-
+            data = move_data.setdefault(
+                algorithm,
+                {"times": [], "nodes": []},
+            )
             try:
-                time_ms = float(record.get("thinking_time_ms", 0))
-                nodes = int(record.get("nodes_evaluated", 0))
-                algo_moves[algo]["times"].append(time_ms)
-                algo_moves[algo]["nodes"].append(nodes)
-            except (ValueError, TypeError):
-                pass
+                data["times"].append(
+                    float(record.get("thinking_time_ms", 0) or 0)
+                )
+                data["nodes"].append(
+                    int(record.get("nodes_evaluated", 0) or 0)
+                )
+            except (TypeError, ValueError):
+                continue
 
-        # Đếm wins/losses/draws cho mỗi thuật toán
-        # Đọc lại records để map game_id -> algorithms used
-        game_algos = {}  # {game_id: set of algorithms}
-        game_sides = {}  # {game_id: {"white": algo, "black": algo}}
+        algorithms = set(move_data)
+        for game in game_results.values():
+            algorithms.update(
+                name for name in (game["white"], game["black"]) if name
+            )
 
-        for record in records:
-            algo = record.get("algorithm", "")
-            game_id = record.get("game_id", "")
-            if algo and algo != "RESULT" and game_id:
-                if game_id not in game_algos:
-                    game_algos[game_id] = set()
-                game_algos[game_id].add(algo)
+        summary = {}
+        for algorithm in sorted(algorithms):
+            data = move_data.get(algorithm, {"times": [], "nodes": []})
+            wins = losses = draws = 0
 
-        # Tổng hợp
-        all_algos = set(algo_moves.keys())
-        for algo in all_algos:
-            data = algo_moves[algo]
-            n_moves = len(data["times"])
-            avg_time = sum(data["times"]) / n_moves if n_moves > 0 else 0
-            avg_nodes = sum(data["nodes"]) / n_moves if n_moves > 0 else 0
-
-            wins = 0
-            losses = 0
-            draws = 0
-
-            for game_id, result in game_results.items():
-                if game_id not in game_algos:
+            for game in game_results.values():
+                white = game["white"]
+                black = game["black"]
+                result = game["result"]
+                if algorithm not in {white, black}:
                     continue
-                algos_in_game = game_algos[game_id]
-                if algo not in algos_in_game:
-                    continue
-
                 if result == "draw":
                     draws += 1
-                elif result in ("white_win", "black_win"):
-                    # Cần xác định ai là trắng/đen
-                    # Đơn giản: nếu chỉ có 1 algo thì tính win
-                    # Nếu 2 algos, cần logic phức tạp hơn
-                    wins += 1  # Simplified
+                elif (
+                    result == "white_win" and algorithm == white
+                ) or (
+                    result == "black_win" and algorithm == black
+                ):
+                    wins += 1
+                elif result in {"white_win", "black_win"}:
+                    losses += 1
 
-            total_games = wins + losses + draws
-            win_rate = wins / total_games if total_games > 0 else 0
-
-            summary[algo] = {
-                "avg_time_ms": round(avg_time, 2),
-                "avg_nodes": round(avg_nodes),
-                "total_moves": n_moves,
-                "games": total_games,
+            total_moves = len(data["times"])
+            games = wins + losses + draws
+            summary[algorithm] = {
+                "avg_time_ms": round(
+                    sum(data["times"]) / total_moves
+                    if total_moves else 0,
+                    2,
+                ),
+                "avg_nodes": round(
+                    sum(data["nodes"]) / total_moves
+                    if total_moves else 0
+                ),
+                "total_moves": total_moves,
+                "games": games,
                 "wins": wins,
                 "losses": losses,
                 "draws": draws,
-                "win_rate": round(win_rate, 4),
+                "win_rate": round(wins / games, 4) if games else 0,
             }
-
         return summary

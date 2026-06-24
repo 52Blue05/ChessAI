@@ -3,14 +3,14 @@ scripts/run_benchmark.py
 Script chạy benchmark Round Robin tự động giữa 3 AI.
 
 Mỗi cặp AI đấu với nhau (cả 2 bên trắng/đen), mỗi cặp đấu N ván.
-Kết quả ghi vào benchmark_results.csv.
+Mỗi lần chạy tạo một file CSV riêng trong thư mục benchmark_results/.
 
 Chạy:
     python scripts/run_benchmark.py
     python scripts/run_benchmark.py --games 20 --max-moves 200
 
 Output:
-    - benchmark_results.csv (chi tiết từng nước đi)
+    - benchmark_results/cli_benchmark_<timestamp>.csv
     - In bảng tổng hợp ra console
 """
 
@@ -21,13 +21,16 @@ import time
 from pathlib import Path
 from itertools import combinations
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # Thêm root vào path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backend.engine.board import Board
 from backend.engine.move_generator import MoveGenerator
-from backend.engine.benchmark_logger import BenchmarkLogger, BenchmarkStats
+from backend.engine.benchmark_logger import BenchmarkLogger
 from ai_core.agents import GreedyAgent, MinimaxAgent, MCTSAgent
 
 
@@ -37,6 +40,8 @@ def play_game(
     move_generator: MoveGenerator,
     logger: BenchmarkLogger,
     max_moves: int = 150,
+    white_name: str = "",
+    black_name: str = "",
 ) -> str:
     """
     Chơi 1 ván đấu giữa 2 AI.
@@ -46,6 +51,8 @@ def play_game(
     """
     game_id = str(uuid.uuid4())[:8]
     board = Board.from_fen()
+    white_name = white_name or white_agent.name
+    black_name = black_name or black_agent.name
 
     for move_num in range(1, max_moves + 1):
         # Xác định agent đang đi
@@ -64,7 +71,12 @@ def play_game(
             else:
                 result = "draw"
 
-            logger.log_game_result(game_id, result)
+            logger.log_game_result(
+                game_id,
+                result,
+                white_algorithm=white_name,
+                black_algorithm=black_name,
+            )
             return result
 
         # Lấy stats
@@ -93,18 +105,36 @@ def play_game(
             fen_before=fen_before,
             fen_after=fen_after,
             game_result=game_result,
+            white_algorithm=white_name,
+            black_algorithm=black_name,
         )
 
         if game_result != "ongoing":
-            logger.log_game_result(game_id, game_result)
+            logger.log_game_result(
+                game_id,
+                game_result,
+                white_algorithm=white_name,
+                black_algorithm=black_name,
+            )
             return game_result
 
     # Hết max_moves → hòa
-    logger.log_game_result(game_id, "draw")
+    logger.log_game_result(
+        game_id,
+        "draw",
+        white_algorithm=white_name,
+        black_algorithm=black_name,
+    )
     return "draw"
 
 
-def run_round_robin(games_per_pair: int = 10, max_moves: int = 150):
+def run_round_robin(
+    games_per_pair: int = 10,
+    max_moves: int = 150,
+    minimax_depth: int = 2,
+    mcts_simulations: int = 100,
+    output_dir: str = "",
+):
     """
     Chạy Round Robin giữa 3 AI.
     Mỗi cặp đấu games_per_pair ván (đổi bên trắng/đen).
@@ -112,12 +142,23 @@ def run_round_robin(games_per_pair: int = 10, max_moves: int = 150):
     # Khởi tạo agents
     agents = {
         "greedy": GreedyAgent(),
-        "minimax": MinimaxAgent(depth=2),
-        "mcts": MCTSAgent(simulations=100),
+        "minimax": MinimaxAgent(depth=minimax_depth),
+        "mcts": MCTSAgent(simulations=mcts_simulations),
     }
 
     move_generator = MoveGenerator()
-    logger = BenchmarkLogger()
+    run_config = {
+        "games_per_pair": games_per_pair,
+        "max_moves": max_moves,
+        "minimax_depth": minimax_depth,
+        "mcts_simulations": mcts_simulations,
+        "algorithms": list(agents),
+    }
+    logger = BenchmarkLogger.create_session(
+        run_config,
+        output_dir=output_dir or None,
+        prefix="cli_benchmark",
+    )
 
     # Kết quả
     results = {name: {"wins": 0, "losses": 0, "draws": 0} for name in agents}
@@ -131,6 +172,9 @@ def run_round_robin(games_per_pair: int = 10, max_moves: int = 150):
     print(f"Agents: {', '.join(agents.keys())}")
     print(f"Games per pair: {games_per_pair}")
     print(f"Max moves per game: {max_moves}")
+    print(f"Minimax depth: {minimax_depth}")
+    print(f"MCTS simulations: {mcts_simulations}")
+    print(f"Output CSV: {logger.csv_path}")
     print("=" * 60)
 
     for name_a, name_b in pairs:
@@ -153,7 +197,15 @@ def run_round_robin(games_per_pair: int = 10, max_moves: int = 150):
                   f"{white_name} (W) vs {black_name} (B) ... ", end="", flush=True)
 
             start = time.time()
-            result = play_game(white_agent, black_agent, move_generator, logger, max_moves)
+            result = play_game(
+                white_agent,
+                black_agent,
+                move_generator,
+                logger,
+                max_moves,
+                white_name=white_name,
+                black_name=black_name,
+            )
             elapsed = time.time() - start
 
             print(f"{result} ({elapsed:.1f}s)")
@@ -207,6 +259,18 @@ if __name__ == "__main__":
                         help="Số ván đấu mỗi cặp (mặc định: 10)")
     parser.add_argument("--max-moves", type=int, default=150,
                         help="Số nước đi tối đa mỗi ván (mặc định: 150)")
+    parser.add_argument("--depth", type=int, default=2,
+                        help="Độ sâu Minimax (mặc định: 2)")
+    parser.add_argument("--simulations", type=int, default=100,
+                        help="Số simulations MCTS (mặc định: 100)")
+    parser.add_argument("--output-dir", default="",
+                        help="Thư mục chứa CSV benchmark session")
 
     args = parser.parse_args()
-    run_round_robin(games_per_pair=args.games, max_moves=args.max_moves)
+    run_round_robin(
+        games_per_pair=args.games,
+        max_moves=args.max_moves,
+        minimax_depth=args.depth,
+        mcts_simulations=args.simulations,
+        output_dir=args.output_dir,
+    )
